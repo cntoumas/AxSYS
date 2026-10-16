@@ -12,6 +12,7 @@ import logging
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -49,8 +50,94 @@ class AxlsBridge:
         bound: float = 0.05,
         lsb_width: Optional[int] = None,
         out_approx_path: Optional[str | Path] = None,
+        isolated: bool = True,
     ) -> Dict[str, Any]:
-        """Iteratively prune the gate-level netlist within the specified error bound."""
+        """Iteratively prune the gate-level netlist within the specified error bound.
+        
+        When isolated=True, runs in an isolated subprocess to protect the calling process's
+        working directory from os.chdir() and ensure thread safety.
+        """
+        if not isolated:
+            return self._optimize_direct(
+                metric=metric,
+                bound=bound,
+                lsb_width=lsb_width,
+                out_approx_path=out_approx_path,
+            )
+
+        # Isolated execution mode
+        run_dir = self.work_dir
+        temp_dir_ctx = None
+        if run_dir is None:
+            temp_dir_ctx = tempfile.TemporaryDirectory(prefix="axls_run_")
+            run_dir = Path(temp_dir_ctx.name).resolve()
+        else:
+            run_dir.mkdir(parents=True, exist_ok=True)
+
+        target_out = Path(out_approx_path).resolve() if out_approx_path else (run_dir / "approx_cone.v")
+        target_out.parent.mkdir(parents=True, exist_ok=True)
+
+        cmd = [
+            sys.executable,
+            "-m", "src.axls_bridge",
+            "-i", str(self.cone_vlog),
+            "-m", metric,
+            "-b", str(bound),
+            "-t", str(self.tech),
+            "-s", str(self.samples),
+            "--work-dir", str(run_dir),
+            "-o", str(target_out),
+        ]
+        if lsb_width is not None:
+            cmd.extend(["--lsb-width", str(lsb_width)])
+
+        repo_root = str(Path(__file__).resolve().parent.parent)
+        env = os.environ.copy()
+        env["PYTHONPATH"] = f"{repo_root}:{env.get('PYTHONPATH', '')}"
+
+        logger.info("Spawning isolated AxLS worker in %s", run_dir)
+        try:
+            proc = subprocess.run(
+                cmd,
+                cwd=str(run_dir),
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+            if proc.returncode != 0:
+                logger.error("AxLS worker failed (exit %d):\n%s", proc.returncode, proc.stderr)
+                return {
+                    "status": "FAILED",
+                    "error": proc.stderr or proc.stdout,
+                }
+
+            # Find the last JSON block in stdout
+            lines = [line for line in proc.stdout.strip().splitlines() if line.strip()]
+            for start_idx in range(len(lines)):
+                try:
+                    result = json.loads("\n".join(lines[start_idx:]))
+                    return result
+                except json.JSONDecodeError:
+                    continue
+
+            logger.error("Could not parse JSON output from AxLS worker:\n%s", proc.stdout)
+            return {"status": "FAILED", "error": "Invalid JSON response from AxLS worker"}
+        except subprocess.TimeoutExpired:
+            logger.error("AxLS optimization timed out after 300s")
+            return {"status": "TIMEOUT", "error": "AxLS optimization timed out after 300s"}
+        finally:
+            if temp_dir_ctx:
+                temp_dir_ctx.cleanup()
+
+    def _optimize_direct(
+        self,
+        metric: str = "med",
+        bound: float = 0.05,
+        lsb_width: Optional[int] = None,
+        out_approx_path: Optional[str | Path] = None,
+    ) -> Dict[str, Any]:
+        """Direct AxLS optimization (executed inside worker process)."""
         metric_normalized = metric.lower()
         if metric_normalized not in ("med", "mred", "wce", "wcre", "msed", "er"):
             logger.warning("Unrecognized metric '%s', defaulting to 'med'", metric)
@@ -190,6 +277,7 @@ def main() -> None:
     parser.add_argument("--lsb-width", type=int, default=None, help="LSB bit-width to restrict pruning")
     parser.add_argument("-t", "--tech", default="NanGate15nm", help="Standard cell tech library")
     parser.add_argument("-s", "--samples", type=int, default=500, help="Simulation samples")
+    parser.add_argument("--work-dir", default=None, help="Working directory for intermediate artifacts")
     parser.add_argument("-o", "--output", default=None, help="Output approximated Verilog path")
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose logging")
 
@@ -200,12 +288,14 @@ def main() -> None:
         cone_verilog_path=args.input,
         tech=args.tech,
         samples=args.samples,
+        work_dir=args.work_dir,
     )
     result = bridge.optimize(
         metric=args.metric,
         bound=args.bound,
         lsb_width=args.lsb_width,
         out_approx_path=args.output,
+        isolated=False,
     )
     print(json.dumps(result, indent=2))
 

@@ -23,7 +23,8 @@ from pyosys import libyosys as ys
 
 logger = logging.getLogger("verifier")
 
-TECH_V_DEFAULT = Path(__file__).resolve().parent.parent / "third_party" / "AxLS" / "templates" / "NanGate15nm.v"
+TECH_TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "third_party" / "AxLS" / "templates"
+TECH_V_DEFAULT = TECH_TEMPLATES_DIR / "NanGate15nm.v"
 
 
 class MiterVerifier:
@@ -34,13 +35,27 @@ class MiterVerifier:
         exact_vlog: str | Path,
         approx_vlog: str | Path,
         meta_json: str | Path,
+        tech: str = "NanGate15nm",
         tech_vlog: Optional[str | Path] = None,
         num_cycles: int = 500,
     ):
         self.exact_vlog = Path(exact_vlog).resolve()
         self.approx_vlog = Path(approx_vlog).resolve()
         self.meta_json = Path(meta_json).resolve()
-        self.tech_vlog = Path(tech_vlog).resolve() if tech_vlog else TECH_V_DEFAULT
+
+        if tech_vlog:
+            self.tech_vlog = Path(tech_vlog).resolve()
+        else:
+            tech_as_path = Path(tech)
+            if tech_as_path.is_file():
+                self.tech_vlog = tech_as_path.resolve()
+            else:
+                candidate = TECH_TEMPLATES_DIR / f"{tech}.v"
+                self.tech_vlog = candidate.resolve() if candidate.is_file() else TECH_V_DEFAULT
+
+        if not self.tech_vlog.exists():
+            logger.warning("Technology Verilog file not found: %s", self.tech_vlog)
+
         self.num_cycles = num_cycles
 
         with open(self.meta_json, "r", encoding="utf-8") as f:
@@ -119,6 +134,9 @@ class MiterVerifier:
             "  integer control_errors = 0;",
             "  real total_error_distance = 0.0;",
             "  real max_error_distance = 0.0;",
+            "  real total_squared_error = 0.0;",
+            "  real total_rel_error = 0.0;",
+            "  integer error_cycle_count = 0;",
             "  real current_error = 0.0;",
             "  real diff_val = 0.0;",
             "",
@@ -202,6 +220,11 @@ class MiterVerifier:
                     "      end",
                     "      total_error_distance = total_error_distance + diff_val;",
                     "      if (diff_val > max_error_distance) max_error_distance = diff_val;",
+                    "      if (diff_val > 0.0) error_cycle_count = error_cycle_count + 1;",
+                    "      total_squared_error = total_squared_error + (diff_val * diff_val);",
+                    f"      if ({name}_exact != 0) begin",
+                    f"        total_rel_error = total_rel_error + (diff_val / ({name}_exact > 0 ? {name}_exact : -{name}_exact));",
+                    "      end",
                 ])
 
         lines.extend([
@@ -222,6 +245,9 @@ class MiterVerifier:
             "        $display(\"Control corruption errors: %0d\", control_errors);",
             "        $display(\"Mean Error Distance (MED): %f\", total_error_distance / cycle_count);",
             "        $display(\"Worst Case Error (WCE): %f\", max_error_distance);",
+            "        $display(\"Error Rate (ER): %f\", error_cycle_count * 1.0 / cycle_count);",
+            "        $display(\"Mean Squared Error (MSED): %f\", total_squared_error / cycle_count);",
+            "        $display(\"Mean Relative Error (MRED): %f\", total_rel_error / cycle_count);",
             "        if (control_errors > 0) begin",
             "          $display(\"RESULT: FAILED_CONTROL_CORRUPTION\");",
             "          $finish(1);",
@@ -262,12 +288,19 @@ class MiterVerifier:
             ]
 
             logger.info("Compiling Miter: %s", " ".join(compile_cmd))
-            proc_comp = subprocess.run(compile_cmd, capture_output=True, text=True)
-            if proc_comp.returncode != 0 and self.tech_vlog.exists():
-                compile_cmd_tech = compile_cmd + [str(self.tech_vlog)]
-                proc_comp_tech = subprocess.run(compile_cmd_tech, capture_output=True, text=True)
-                if proc_comp_tech.returncode == 0:
-                    proc_comp = proc_comp_tech
+            try:
+                proc_comp = subprocess.run(compile_cmd, capture_output=True, text=True, timeout=120)
+                if proc_comp.returncode != 0 and self.tech_vlog.exists():
+                    compile_cmd_tech = compile_cmd + [str(self.tech_vlog)]
+                    proc_comp_tech = subprocess.run(compile_cmd_tech, capture_output=True, text=True, timeout=120)
+                    if proc_comp_tech.returncode == 0:
+                        proc_comp = proc_comp_tech
+            except subprocess.TimeoutExpired:
+                logger.error("Miter compilation timed out after 120s")
+                return {
+                    "status": "TIMEOUT",
+                    "stderr": "iverilog compilation timed out after 120 seconds",
+                }
 
             if proc_comp.returncode != 0:
                 logger.error("Miter compilation failed: %s", proc_comp.stderr)
@@ -276,9 +309,16 @@ class MiterVerifier:
                     "stderr": proc_comp.stderr,
                 }
 
-            # 5. Run simulation
+            # 5. Run simulation with safety timeout
             run_cmd = ["vvp", str(sim_vvp)]
-            proc_run = subprocess.run(run_cmd, capture_output=True, text=True)
+            try:
+                proc_run = subprocess.run(run_cmd, capture_output=True, text=True, timeout=120)
+            except subprocess.TimeoutExpired:
+                logger.error("Miter simulation timed out after 120s")
+                return {
+                    "status": "TIMEOUT",
+                    "stderr": "vvp simulation timed out after 120 seconds",
+                }
 
             stdout = proc_run.stdout
             logger.info("Miter simulation output:\n%s", stdout)
@@ -299,17 +339,66 @@ class MiterVerifier:
             if m_wce:
                 wce = float(m_wce.group(1))
 
+            er = 0.0
+            m_er = re.search(r"Error Rate \(ER\):\s+([\d\.]+)", stdout)
+            if m_er:
+                er = float(m_er.group(1))
+
+            msed = 0.0
+            m_msed = re.search(r"Mean Squared Error \(MSED\):\s+([\d\.]+)", stdout)
+            if m_msed:
+                msed = float(m_msed.group(1))
+
+            mred = 0.0
+            m_mred = re.search(r"Mean Relative Error \(MRED\):\s+([\d\.]+)", stdout)
+            if m_mred:
+                mred = float(m_mred.group(1))
+
             control_passed = (control_errors == 0) and ("RESULT: SUCCESS_CONTROL_INTACT" in stdout)
 
-            # Compare against bound
+            # Compare against bounds across all declared relaxed signals
             bound_passed = True
+            metric_results = []
             for sig in self.meta.get("relaxed_signals", []):
                 bound = float(sig.get("bound", 1e9))
                 metric = sig.get("metric", "MED").upper()
-                if metric == "WCE" and wce > bound:
+                wire_name = sig.get("wire", "unknown")
+
+                measured_val = None
+                if metric == "WCE":
+                    measured_val = wce
+                elif metric == "MED":
+                    measured_val = med
+                elif metric == "ER":
+                    measured_val = er
+                elif metric == "MSED":
+                    measured_val = msed
+                elif metric == "MRED":
+                    measured_val = mred
+                else:
+                    logger.error("Unsupported error metric '%s' on signal '%s'", metric, wire_name)
                     bound_passed = False
-                elif metric == "MED" and med > bound:
+                    metric_results.append({
+                        "wire": wire_name,
+                        "metric": metric,
+                        "bound": bound,
+                        "measured": None,
+                        "satisfied": False,
+                        "error": f"Unsupported metric: {metric}",
+                    })
+                    continue
+
+                satisfied = measured_val <= bound
+                if not satisfied:
                     bound_passed = False
+
+                metric_results.append({
+                    "wire": wire_name,
+                    "metric": metric,
+                    "bound": bound,
+                    "measured": measured_val,
+                    "satisfied": satisfied,
+                })
 
             overall_status = "PASSED" if (control_passed and bound_passed) else "FAILED"
 
@@ -319,7 +408,11 @@ class MiterVerifier:
                 "control_errors": control_errors,
                 "measured_med": med,
                 "measured_wce": wce,
+                "measured_er": er,
+                "measured_msed": msed,
+                "measured_mred": mred,
                 "error_bound_satisfied": bound_passed,
+                "metric_evaluations": metric_results,
                 "simulated_cycles": self.num_cycles,
                 "log": stdout,
             }
@@ -330,7 +423,8 @@ def main() -> None:
     parser.add_argument("--exact", required=True, help="Golden exact RTL Verilog")
     parser.add_argument("--approx", required=True, help="Approximated top netlist Verilog")
     parser.add_argument("--meta", required=True, help="Path to metadata.json")
-    parser.add_argument("--tech-v", default=None, help="Standard cell library Verilog")
+    parser.add_argument("-t", "--tech", default="NanGate15nm", help="Standard cell library name")
+    parser.add_argument("--tech-v", default=None, help="Standard cell library Verilog path")
     parser.add_argument("-n", "--cycles", type=int, default=500, help="Simulation clock cycles")
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose logging")
 
@@ -341,6 +435,7 @@ def main() -> None:
         exact_vlog=args.exact,
         approx_vlog=args.approx,
         meta_json=args.meta,
+        tech=args.tech,
         tech_vlog=args.tech_v,
         num_cycles=args.cycles,
     )

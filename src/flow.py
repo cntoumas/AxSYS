@@ -48,6 +48,14 @@ class AxcFlow:
         self.sim_samples = sim_samples
         self.verify_cycles = verify_cycles
 
+        # Resolve tech Verilog library path
+        tech_p = Path(self.tech)
+        if tech_p.is_file():
+            self.tech_vlog_path: Optional[Path] = tech_p.resolve()
+        else:
+            cand = Path(__file__).resolve().parent.parent / "third_party" / "AxLS" / "templates" / f"{self.tech}.v"
+            self.tech_vlog_path = cand.resolve() if cand.is_file() else None
+
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
     def run(self) -> Dict[str, Any]:
@@ -56,6 +64,7 @@ class AxcFlow:
         logger.info("=== STARTING AXC EDA FLOW ===")
         logger.info("Input Verilog: %s", self.input_verilog)
         logger.info("Output Directory: %s", self.output_dir)
+        logger.info("Technology: %s (library file: %s)", self.tech, self.tech_vlog_path)
 
         # -------------------------------------------------------------
         # STEP 1: Cone Extraction
@@ -74,17 +83,34 @@ class AxcFlow:
         )
 
         if cone_result.get("status") != "SUCCESS":
-            logger.warning("Cone extraction halted with status: %s", cone_result.get("status"))
-            return {
-                "status": "STOPPED",
-                "reason": cone_result.get("status"),
+            elapsed = time.time() - start_time
+            status_reason = cone_result.get("status", "EXTRACTION_FAILED")
+            logger.warning("Cone extraction halted with status: %s", status_reason)
+            stopped_summary: Dict[str, Any] = {
+                "flow_status": "STOPPED",
+                "reason": status_reason,
+                "top_module": cone_result.get("top_module", "unknown"),
+                "elapsed_seconds": round(elapsed, 2),
                 "details": cone_result,
             }
+            summary_path = self.output_dir / "flow_summary.json"
+            with open(summary_path, "w", encoding="utf-8") as f:
+                json.dump(stopped_summary, f, indent=2)
+            return stopped_summary
 
         relaxed_signals = cone_result.get("relaxed_signals", [])
-        primary_metric = relaxed_signals[0]["metric"] if relaxed_signals else "MED"
-        primary_bound = float(relaxed_signals[0]["bound"]) if relaxed_signals else 0.05
-        primary_lsb = int(relaxed_signals[0]["lsb_width"]) if relaxed_signals else None
+        logger.info("Identified %d relaxed signal(s): %s", len(relaxed_signals), [s.get("wire") for s in relaxed_signals])
+        for s in relaxed_signals:
+            logger.info("  Signal: %s | Metric: %s | Bound: %s | LSB: %s",
+                        s.get("wire"), s.get("metric"), s.get("bound"), s.get("lsb_width"))
+
+        primary_metric = relaxed_signals[0].get("metric", "MED") if relaxed_signals else "MED"
+        # When multiple relaxed signals exist, target the most restrictive (minimum) bound
+        bounds_list = [float(s["bound"]) for s in relaxed_signals if "bound" in s]
+        primary_bound = min(bounds_list) if bounds_list else 0.05
+
+        lsb_candidates = [int(s["lsb_width"]) for s in relaxed_signals if s.get("lsb_width") is not None]
+        primary_lsb = max(lsb_candidates) if lsb_candidates else None
 
         # -------------------------------------------------------------
         # STEP 2: AxLS Logic Approximation
@@ -116,6 +142,8 @@ class AxcFlow:
         reintegrator = Reintegrator(
             top_shell_path=top_shell_vlog,
             approx_cone_path=approx_cone_vlog,
+            tech=self.tech,
+            tech_verilog_path=self.tech_vlog_path,
         )
         reint_result = reintegrator.reintegrate(out_final_path=final_top_vlog)
 
@@ -141,6 +169,8 @@ class AxcFlow:
             exact_vlog=self.input_verilog,
             approx_vlog=final_top_vlog,
             meta_json=meta_json_path,
+            tech=self.tech,
+            tech_vlog=self.tech_vlog_path,
             num_cycles=self.verify_cycles,
         )
         verify_result = verifier.verify()
@@ -151,12 +181,13 @@ class AxcFlow:
         summary: Dict[str, Any] = {
             "flow_status": "SUCCESS" if verify_result.get("status") == "PASSED" else "VERIFICATION_FAILED",
             "elapsed_seconds": round(elapsed, 2),
-            "top_module": cone_result["top_module"],
-            "submodule_module": cone_result["submodule_module"],
-            "extracted_safe_cells": cone_result["num_safe_cells"],
+            "top_module": cone_result.get("top_module", "unknown"),
+            "submodule_module": cone_result.get("submodule_module", ""),
+            "extracted_safe_cells": cone_result.get("num_safe_cells", 0),
             "approximation": {
                 "metric": primary_metric,
                 "bound": primary_bound,
+                "relaxed_signals": relaxed_signals,
                 "measured_error": approx_result.get("measured_error"),
                 "pruned_nodes": approx_result.get("pruned_nodes_count"),
                 "initial_area": approx_result.get("initial_area"),
