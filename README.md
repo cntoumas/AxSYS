@@ -116,11 +116,11 @@ sudo apt-get install -y iverilog yosys
 
 ```bash
 git clone --recursive <repository-url>
-cd axc_yosys_flow
+cd AxSYS
 
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -e .
 ```
 
 ---
@@ -129,16 +129,20 @@ pip install -r requirements.txt
 
 ### Command Line Interface (CLI)
 
-Run the end-to-end synthesis and verification flow:
+Run the end-to-end synthesis and verification flow using the installed CLI entry point or python module:
 
 ```bash
-python -m src.flow \
+# Using the installed axsys CLI
+axsys \
     --input rtl/design.v \
     --output-dir build/design_run \
     --tech NanGate15nm \
     --clk-period 5.0 \
     --samples 500 \
     --verify-cycles 500
+
+# Or invoking via Python
+python -m axsys.flow --input rtl/design.v --output-dir build/design_run
 ```
 
 #### CLI Options
@@ -146,12 +150,12 @@ python -m src.flow \
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `-i`, `--input` | Path | *Required* | Path to attribute-annotated input Verilog RTL |
-| `-o`, `--output-dir` | Path | `build/axc_out` | Output directory for all generated netlists and reports |
-| `--tech` | String | `NanGate15nm` | Target standard-cell library (`NanGate15nm`, etc.) |
-| `--clk-port` | String | `clk` | Clock port name |
-| `--clk-period` | Float | `10.0` | Clock period in nanoseconds (for SDC generation) |
+| `-o`, `--output-dir` | Path | `build/axc_output` | Output directory for all generated netlists and reports |
+| `-t`, `--tech` | String | `NanGate15nm` | Target standard-cell library (`NanGate15nm`, etc.) |
+| `--clk`, `--clk-port` | String | `clk` | Clock port name |
+| `--period`, `--clk-period` | Float | `10.0` | Clock period in nanoseconds (for SDC generation) |
 | `-s`, `--samples` | Integer | `300` | Number of simulation vectors for AxLS pruning |
-| `--verify-cycles` | Integer | `500` | Number of cycles to run in automated miter verification |
+| `-n`, `--verify-cycles` | Integer | `300` | Number of cycles to run in automated miter verification |
 | `-v`, `--verbose` | Flag | `False` | Enable debug logging |
 
 ---
@@ -160,7 +164,7 @@ python -m src.flow \
 
 ```python
 from pathlib import Path
-from src.flow import AxcFlow
+from axsys import AxcFlow
 
 flow = AxcFlow(
     input_verilog=Path("rtl/design.v"),

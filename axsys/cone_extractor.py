@@ -11,7 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-from collections import Counter
+from collections import Counter, deque
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -237,10 +237,10 @@ class ConeExtractor:
 
         # 5. Backward BFS for C_precise
         c_precise: Set[str] = set()
-        queue = list(precise_seeds)
+        queue = deque(precise_seeds)
         visited = set(queue)
         while queue:
-            b = queue.pop(0)
+            b = queue.popleft()
             if b in bit_drivers:
                 cell_name = bit_drivers[b]
                 if cell_name not in c_precise:
@@ -252,10 +252,10 @@ class ConeExtractor:
 
         # 6. Backward BFS for C_relax
         c_relax: Set[str] = set()
-        queue = list(relax_seeds)
+        queue = deque(relax_seeds)
         visited = set(queue)
         while queue:
-            b = queue.pop(0)
+            b = queue.popleft()
             if b in bit_drivers:
                 cell_name = bit_drivers[b]
                 if cell_name not in c_relax:

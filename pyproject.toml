@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "axsys"
+version = "0.1.0"
+description = "Attribute-Driven Approximate Logic Synthesis & Verification Framework"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "cntoumas", email = "cntoumas@physics.auth.gr"},
+]
+keywords = [
+    "approximate-computing",
+    "eda",
+    "yosys",
+    "synthesis",
+    "verilog",
+    "logic-synthesis",
+    "verification",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Electronic Design Automation (EDA)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+]
+dependencies = [
+    "pyosys>=0.70",
+    "numpy>=1.24.0",
+    "scipy>=1.10.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "matplotlib>=3.8.0",
+]
+
+[project.scripts]
+axsys = "axsys.flow:main"
+axsys-cone = "axsys.cone_extractor:main"
+axsys-sdc = "axsys.sdc_generator:main"
+axsys-verify = "axsys.verifier:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["axsys*"]
+exclude = ["tests*", "third_party*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]

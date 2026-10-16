@@ -18,11 +18,11 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from src.axls_bridge import AxlsBridge
-from src.cone_extractor import ConeExtractor
-from src.reintegrator import Reintegrator
-from src.sdc_generator import SdcGenerator
-from src.verifier import MiterVerifier
+from axsys.axls_bridge import AxlsBridge
+from axsys.cone_extractor import ConeExtractor
+from axsys.reintegrator import Reintegrator
+from axsys.sdc_generator import SdcGenerator
+from axsys.verifier import MiterVerifier
 
 logger = logging.getLogger("axc_flow")
 
@@ -218,8 +218,8 @@ def main() -> None:
     parser.add_argument("-i", "--input", required=True, help="Input annotated Verilog file")
     parser.add_argument("-o", "--output-dir", default="build/axc_output", help="Output directory")
     parser.add_argument("-t", "--tech", default="NanGate15nm", help="Standard cell tech library")
-    parser.add_argument("--clk", default="clk", help="Clock port name")
-    parser.add_argument("--period", type=float, default=10.0, help="Clock period in ns")
+    parser.add_argument("--clk", "--clk-port", dest="clk", default="clk", help="Clock port name")
+    parser.add_argument("--period", "--clk-period", dest="period", type=float, default=10.0, help="Clock period in ns")
     parser.add_argument("-s", "--samples", type=int, default=300, help="AxLS simulation samples")
     parser.add_argument("-n", "--verify-cycles", type=int, default=300, help="Miter verification clock cycles")
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose logging")

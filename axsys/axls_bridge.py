@@ -79,7 +79,7 @@ class AxlsBridge:
 
         cmd = [
             sys.executable,
-            "-m", "src.axls_bridge",
+            "-m", "axsys.axls_bridge",
             "-i", str(self.cone_vlog),
             "-m", metric,
             "-b", str(bound),

@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
-from src.cone_extractor import ConeExtractor
+from axsys.cone_extractor import ConeExtractor
 
 
 def test_mac_pe_extraction(tmp_path: Path):

@@ -1,7 +1,7 @@
 """End-to-End Flow Integration Tests."""
 
 from pathlib import Path
-from src.flow import AxcFlow
+from axsys.flow import AxcFlow
 
 
 def test_full_pipeline_mac_pe(tmp_path: Path):
