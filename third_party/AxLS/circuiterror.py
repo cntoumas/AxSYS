@@ -18,9 +18,13 @@ def extract_numbers(filename):
     file = open(filename, 'r')
     rows = file.read().split('\n')
     for row in rows:
-        row = row.replace(' ','')
-        if row.isdigit():
+        row = row.replace(' ', '')
+        if not row:
+            continue
+        try:
             result.append(int(row))
+        except ValueError:
+            pass
     file.close()
     return result
 

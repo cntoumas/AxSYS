@@ -189,7 +189,7 @@ class ConeExtractor:
                     "lsb_width": min(lsb_w, wire.width),
                 })
 
-                for i in range(min(lsb_w, wire.width)):
+                for i in range(wire.width):
                     relax_seeds.add(dsu.find((wname, i)))
 
             if has_precise:

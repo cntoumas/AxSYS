@@ -139,6 +139,18 @@ class MiterVerifier:
             "  integer error_cycle_count = 0;",
             "  real current_error = 0.0;",
             "  real diff_val = 0.0;",
+        ])
+
+        for sig_name in relaxed_names:
+            lines.extend([
+                f"  real total_error_distance_{sig_name} = 0.0;",
+                f"  real max_error_distance_{sig_name} = 0.0;",
+                f"  real total_squared_error_{sig_name} = 0.0;",
+                f"  real total_rel_error_{sig_name} = 0.0;",
+                f"  integer error_cycle_count_{sig_name} = 0;",
+            ])
+
+        lines.extend([
             "",
             "  // Clock generation",
             "  always #5 clk = ~clk;",
@@ -218,6 +230,13 @@ class MiterVerifier:
                     "      end else begin",
                     f"        diff_val = {name}_approx - {name}_exact;",
                     "      end",
+                    f"      total_error_distance_{name} = total_error_distance_{name} + diff_val;",
+                    f"      if (diff_val > max_error_distance_{name}) max_error_distance_{name} = diff_val;",
+                    f"      if (diff_val > 0.0) error_cycle_count_{name} = error_cycle_count_{name} + 1;",
+                    f"      total_squared_error_{name} = total_squared_error_{name} + (diff_val * diff_val);",
+                    f"      if ({name}_exact != 0) begin",
+                    f"        total_rel_error_{name} = total_rel_error_{name} + (diff_val / ({name}_exact > 0 ? {name}_exact : -{name}_exact));",
+                    "      end",
                     "      total_error_distance = total_error_distance + diff_val;",
                     "      if (diff_val > max_error_distance) max_error_distance = diff_val;",
                     "      if (diff_val > 0.0) error_cycle_count = error_cycle_count + 1;",
@@ -248,6 +267,18 @@ class MiterVerifier:
             "        $display(\"Error Rate (ER): %f\", error_cycle_count * 1.0 / cycle_count);",
             "        $display(\"Mean Squared Error (MSED): %f\", total_squared_error / cycle_count);",
             "        $display(\"Mean Relative Error (MRED): %f\", total_rel_error / cycle_count);",
+        ])
+
+        for sig_name in relaxed_names:
+            lines.extend([
+                f"        $display(\"Signal {sig_name} Mean Error Distance (MED): %f\", total_error_distance_{sig_name} / cycle_count);",
+                f"        $display(\"Signal {sig_name} Worst Case Error (WCE): %f\", max_error_distance_{sig_name});",
+                f"        $display(\"Signal {sig_name} Error Rate (ER): %f\", error_cycle_count_{sig_name} * 1.0 / cycle_count);",
+                f"        $display(\"Signal {sig_name} Mean Squared Error (MSED): %f\", total_squared_error_{sig_name} / cycle_count);",
+                f"        $display(\"Signal {sig_name} Mean Relative Error (MRED): %f\", total_rel_error_{sig_name} / cycle_count);",
+            ])
+
+        lines.extend([
             "        if (control_errors > 0) begin",
             "          $display(\"RESULT: FAILED_CONTROL_CORRUPTION\");",
             "          $finish(1);",
@@ -356,6 +387,24 @@ class MiterVerifier:
 
             control_passed = (control_errors == 0) and ("RESULT: SUCCESS_CONTROL_INTACT" in stdout)
 
+            sig_metrics: Dict[str, Dict[str, float]] = {}
+            for sig in self.meta.get("relaxed_signals", []):
+                wire = sig.get("wire", "")
+                if not wire:
+                    continue
+                m_s_med = re.search(rf"Signal {re.escape(wire)} Mean Error Distance \(MED\):\s+([\d\.]+)", stdout)
+                m_s_wce = re.search(rf"Signal {re.escape(wire)} Worst Case Error \(WCE\):\s+([\d\.]+)", stdout)
+                m_s_er = re.search(rf"Signal {re.escape(wire)} Error Rate \(ER\):\s+([\d\.]+)", stdout)
+                m_s_msed = re.search(rf"Signal {re.escape(wire)} Mean Squared Error \(MSED\):\s+([\d\.]+)", stdout)
+                m_s_mred = re.search(rf"Signal {re.escape(wire)} Mean Relative Error \(MRED\):\s+([\d\.]+)", stdout)
+                sig_metrics[wire] = {
+                    "MED": float(m_s_med.group(1)) if m_s_med else med,
+                    "WCE": float(m_s_wce.group(1)) if m_s_wce else wce,
+                    "ER": float(m_s_er.group(1)) if m_s_er else er,
+                    "MSED": float(m_s_msed.group(1)) if m_s_msed else msed,
+                    "MRED": float(m_s_mred.group(1)) if m_s_mred else mred,
+                }
+
             # Compare against bounds across all declared relaxed signals
             bound_passed = True
             metric_results = []
@@ -364,17 +413,9 @@ class MiterVerifier:
                 metric = sig.get("metric", "MED").upper()
                 wire_name = sig.get("wire", "unknown")
 
-                measured_val = None
-                if metric == "WCE":
-                    measured_val = wce
-                elif metric == "MED":
-                    measured_val = med
-                elif metric == "ER":
-                    measured_val = er
-                elif metric == "MSED":
-                    measured_val = msed
-                elif metric == "MRED":
-                    measured_val = mred
+                wire_metrics = sig_metrics.get(wire_name, {})
+                if metric in wire_metrics:
+                    measured_val = wire_metrics[metric]
                 else:
                     logger.error("Unsupported error metric '%s' on signal '%s'", metric, wire_name)
                     bound_passed = False
