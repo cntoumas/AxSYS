@@ -1,0 +1,69 @@
+{
+  "top_module": "ffnn",
+  "status": "SUCCESS",
+  "submodule_module": "ffnn_axc_cone_0",
+  "submodule_instance": "ffnn_axc_cone_0",
+  "num_safe_cells": 10,
+  "safe_cells": [
+    "$add$/home/christos-ntoumas/AxSYS/axbench_benchmarking/ffnn/ffnn.v:19$1336",
+    "$add$/home/christos-ntoumas/AxSYS/axbench_benchmarking/ffnn/ffnn.v:19$1337",
+    "$add$/home/christos-ntoumas/AxSYS/axbench_benchmarking/ffnn/ffnn.v:19$1338",
+    "$add$/home/christos-ntoumas/AxSYS/axbench_benchmarking/ffnn/ffnn.v:19$1339",
+    "$mul$/home/christos-ntoumas/AxSYS/axbench_benchmarking/ffnn/ffnn.v:15$1332",
+    "$mul$/home/christos-ntoumas/AxSYS/axbench_benchmarking/ffnn/ffnn.v:16$1333",
+    "$mul$/home/christos-ntoumas/AxSYS/axbench_benchmarking/ffnn/ffnn.v:17$1334",
+    "$mul$/home/christos-ntoumas/AxSYS/axbench_benchmarking/ffnn/ffnn.v:18$1335",
+    "$procmux$1343",
+    "$ternary$/home/christos-ntoumas/AxSYS/axbench_benchmarking/ffnn/ffnn.v:20$1340"
+  ],
+  "cell_types": {
+    "$mul": 4,
+    "$add": 4,
+    "$mux": 2
+  },
+  "relaxed_signals": [
+    {
+      "wire": "out_act",
+      "width": 16,
+      "metric": "MED",
+      "bound": 8.0,
+      "lsb_width": 4
+    }
+  ],
+  "submodule_inputs": [
+    {
+      "name": "out_act",
+      "width": 16
+    },
+    {
+      "name": "in3",
+      "width": 8
+    },
+    {
+      "name": "in0",
+      "width": 8
+    },
+    {
+      "name": "in1",
+      "width": 8
+    },
+    {
+      "name": "valid_in",
+      "width": 1
+    },
+    {
+      "name": "in2",
+      "width": 8
+    }
+  ],
+  "submodule_outputs": [
+    {
+      "name": "n1",
+      "width": 16
+    }
+  ],
+  "files": {
+    "submodule_verilog": "/home/christos-ntoumas/AxSYS/axbench_benchmarking/ffnn/axsys_run/extracted_cone.v",
+    "top_shell_verilog": "/home/christos-ntoumas/AxSYS/axbench_benchmarking/ffnn/axsys_run/top_shell.v"
+  }
+}

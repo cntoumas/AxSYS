@@ -8,4 +8,5 @@ dist/
 work/
 *.vvp
 *.vcd
+axls_workspace/
 

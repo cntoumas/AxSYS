@@ -1,0 +1,87 @@
+{
+  "flow_status": "SUCCESS",
+  "elapsed_seconds": 4.81,
+  "top_module": "ffnn",
+  "submodule_module": "ffnn_axc_cone_0",
+  "extracted_safe_cells": 10,
+  "approximation": {
+    "metric": "MED",
+    "bound": 8.0,
+    "relaxed_signals": [
+      {
+        "wire": "out_act",
+        "width": 16,
+        "metric": "MED",
+        "bound": 8.0,
+        "lsb_width": 4
+      }
+    ],
+    "measured_error": 6.14,
+    "pruned_nodes": 16,
+    "initial_area": 175.47264,
+    "approx_area": 166.37952,
+    "area_savings_percent": 5.18
+  },
+  "power": {
+    "netlist": "/home/christos-ntoumas/AxSYS/axbench_benchmarking/ffnn/axsys_run/final_approx_top.v",
+    "cell_count": 546,
+    "cell_area_um2": 166.38,
+    "leakage_power_uw": 7.9404,
+    "dynamic_power_uw": 14.2828,
+    "total_power_uw": 22.2232,
+    "total_capacitance_ff": 1115.85,
+    "supply_voltage_v": 0.8,
+    "clock_frequency_mhz": 200.0,
+    "activity_factor": 0.2,
+    "cell_breakdown": {
+      "INV_X1": 44,
+      "NAND2_X1": 85,
+      "NAND3_X1": 16,
+      "NOR2_X1": 83,
+      "OR2_X1": 19,
+      "AOI22_X1": 1,
+      "OAI22_X1": 12,
+      "AOI21_X1": 43,
+      "XNOR2_X1": 99,
+      "XOR2_X1": 75,
+      "AND3_X1": 4,
+      "OAI21_X1": 37,
+      "NAND4_X1": 2,
+      "AND2_X1": 15,
+      "NOR3_X1": 3,
+      "AND4_X1": 1,
+      "MUX2_X1": 3,
+      "OR3_X1": 4
+    }
+  },
+  "verification": {
+    "status": "PASSED",
+    "control_integrity": "PASSED",
+    "control_errors": 0,
+    "measured_med": 3.962,
+    "measured_wce": 15.0,
+    "measured_er": 0.512,
+    "measured_msed": 40.366,
+    "measured_mred": 0.005136,
+    "error_bound_satisfied": true,
+    "metric_evaluations": [
+      {
+        "wire": "out_act",
+        "metric": "MED",
+        "bound": 8.0,
+        "measured": 3.962,
+        "satisfied": true
+      }
+    ],
+    "simulated_cycles": 500,
+    "log": "--- VERIFICATION SUMMARY ---\nSimulated cycles: 500\nControl corruption errors: 0\nMean Error Distance (MED): 3.962000\nWorst Case Error (WCE): 15.000000\nError Rate (ER): 0.512000\nMean Squared Error (MSED): 40.366000\nMean Relative Error (MRED): 0.005136\nSignal out_act Mean Error Distance (MED): 3.962000\nSignal out_act Worst Case Error (WCE): 15.000000\nSignal out_act Error Rate (ER): 0.512000\nSignal out_act Mean Squared Error (MSED): 40.366000\nSignal out_act Mean Relative Error (MRED): 0.005136\nRESULT: SUCCESS_CONTROL_INTACT\n"
+  },
+  "generated_files": {
+    "top_shell": "/home/christos-ntoumas/AxSYS/axbench_benchmarking/ffnn/axsys_run/top_shell.v",
+    "extracted_cone": "/home/christos-ntoumas/AxSYS/axbench_benchmarking/ffnn/axsys_run/extracted_cone.v",
+    "approx_cone": "/home/christos-ntoumas/AxSYS/axbench_benchmarking/ffnn/axsys_run/approx_cone.v",
+    "final_approx_top": "/home/christos-ntoumas/AxSYS/axbench_benchmarking/ffnn/axsys_run/final_approx_top.v",
+    "sdc_constraints": "/home/christos-ntoumas/AxSYS/axbench_benchmarking/ffnn/axsys_run/final_approx_top.sdc",
+    "metadata": "/home/christos-ntoumas/AxSYS/axbench_benchmarking/ffnn/axsys_run/cone_meta.json"
+  }
+}

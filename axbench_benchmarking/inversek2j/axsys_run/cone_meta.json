@@ -1,0 +1,57 @@
+{
+  "top_module": "inversek2j",
+  "status": "SUCCESS",
+  "submodule_module": "inversek2j_axc_cone_0",
+  "submodule_instance": "inversek2j_axc_cone_0",
+  "num_safe_cells": 6,
+  "safe_cells": [
+    "$add$/home/christos-ntoumas/AxSYS/axbench_benchmarking/inversek2j/inversek2j.v:15$928",
+    "$add$/home/christos-ntoumas/AxSYS/axbench_benchmarking/inversek2j/inversek2j.v:16$931",
+    "$add$/home/christos-ntoumas/AxSYS/axbench_benchmarking/inversek2j/inversek2j.v:16$932",
+    "$mul$/home/christos-ntoumas/AxSYS/axbench_benchmarking/inversek2j/inversek2j.v:13$926",
+    "$mul$/home/christos-ntoumas/AxSYS/axbench_benchmarking/inversek2j/inversek2j.v:14$927",
+    "$procmux$935"
+  ],
+  "cell_types": {
+    "$mul": 2,
+    "$add": 3,
+    "$mux": 1
+  },
+  "relaxed_signals": [
+    {
+      "wire": "theta1",
+      "width": 16,
+      "metric": "MED",
+      "bound": 16.0,
+      "lsb_width": 4
+    }
+  ],
+  "submodule_inputs": [
+    {
+      "name": "valid_in",
+      "width": 1
+    },
+    {
+      "name": "x",
+      "width": 8
+    },
+    {
+      "name": "y",
+      "width": 8
+    },
+    {
+      "name": "theta1",
+      "width": 16
+    }
+  ],
+  "submodule_outputs": [
+    {
+      "name": "n1",
+      "width": 16
+    }
+  ],
+  "files": {
+    "submodule_verilog": "/home/christos-ntoumas/AxSYS/axbench_benchmarking/inversek2j/axsys_run/extracted_cone.v",
+    "top_shell_verilog": "/home/christos-ntoumas/AxSYS/axbench_benchmarking/inversek2j/axsys_run/top_shell.v"
+  }
+}

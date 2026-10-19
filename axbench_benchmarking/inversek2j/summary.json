@@ -1,0 +1,37 @@
+{
+  "circuit_id": "inversek2j",
+  "name": "Inverse Kinematics (2-Joint)",
+  "domain": "Robotics & Motion Control",
+  "target_bound": 16.0,
+  "lsb_width": 4,
+  "flow_status": "SUCCESS",
+  "elapsed_seconds": 5.4,
+  "baseline": {
+    "cell_count": 873,
+    "area_um2": 279.97,
+    "total_power_uw": 35.9087,
+    "leakage_power_uw": 12.9397,
+    "dynamic_power_uw": 22.969
+  },
+  "approx": {
+    "pruned_nodes": 13,
+    "cell_count": 826,
+    "area_um2": 249.545,
+    "area_savings_percent": 10.87,
+    "total_power_uw": 33.3873,
+    "leakage_power_uw": 11.833,
+    "dynamic_power_uw": 21.5543,
+    "power_savings_percent": 7.02
+  },
+  "verification": {
+    "status": "PASSED",
+    "control_integrity": "PASSED",
+    "control_errors": 0,
+    "med": 7.704,
+    "wce": 13.0,
+    "er_percent": 96.0,
+    "msed": 78.292,
+    "mred": 0.001119,
+    "sqnr_db": -18.94
+  }
+}

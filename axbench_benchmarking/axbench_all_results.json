@@ -1,0 +1,187 @@
+[
+  {
+    "circuit_id": "fir",
+    "name": "FIR Filter",
+    "domain": "Digital Signal Processing",
+    "target_bound": 16.0,
+    "lsb_width": 5,
+    "flow_status": "SUCCESS",
+    "elapsed_seconds": 3.62,
+    "baseline": {
+      "cell_count": 587,
+      "area_um2": 230.867,
+      "total_power_uw": 25.7551,
+      "leakage_power_uw": 10.0381,
+      "dynamic_power_uw": 15.717
+    },
+    "approx": {
+      "pruned_nodes": 17,
+      "cell_count": 464,
+      "area_um2": 140.968,
+      "area_savings_percent": 38.94,
+      "total_power_uw": 18.8674,
+      "leakage_power_uw": 6.6615,
+      "dynamic_power_uw": 12.2059,
+      "power_savings_percent": 26.74
+    },
+    "verification": {
+      "status": "PASSED",
+      "control_integrity": "PASSED",
+      "control_errors": 0,
+      "med": 14.084,
+      "wce": 30.0,
+      "er_percent": 93.6,
+      "msed": 279.64,
+      "mred": 0.026031,
+      "sqnr_db": -24.47
+    }
+  },
+  {
+    "circuit_id": "sobel",
+    "name": "Sobel Filter",
+    "domain": "Computer Vision / Image Processing",
+    "target_bound": 8.0,
+    "lsb_width": 4,
+    "flow_status": "SUCCESS",
+    "elapsed_seconds": 2.97,
+    "baseline": {
+      "cell_count": 530,
+      "area_um2": 167.952,
+      "total_power_uw": 21.4577,
+      "leakage_power_uw": 7.7498,
+      "dynamic_power_uw": 13.7079
+    },
+    "approx": {
+      "pruned_nodes": 7,
+      "cell_count": 476,
+      "area_um2": 146.08,
+      "area_savings_percent": 13.02,
+      "total_power_uw": 19.4579,
+      "leakage_power_uw": 6.9806,
+      "dynamic_power_uw": 12.4773,
+      "power_savings_percent": 9.32
+    },
+    "verification": {
+      "status": "PASSED",
+      "control_integrity": "PASSED",
+      "control_errors": 0,
+      "med": 7.484,
+      "wce": 9.0,
+      "er_percent": 97.0,
+      "msed": 63.008,
+      "mred": 0.033548,
+      "sqnr_db": -17.99
+    }
+  },
+  {
+    "circuit_id": "inversek2j",
+    "name": "Inverse Kinematics (2-Joint)",
+    "domain": "Robotics & Motion Control",
+    "target_bound": 16.0,
+    "lsb_width": 4,
+    "flow_status": "SUCCESS",
+    "elapsed_seconds": 5.4,
+    "baseline": {
+      "cell_count": 873,
+      "area_um2": 279.97,
+      "total_power_uw": 35.9087,
+      "leakage_power_uw": 12.9397,
+      "dynamic_power_uw": 22.969
+    },
+    "approx": {
+      "pruned_nodes": 13,
+      "cell_count": 826,
+      "area_um2": 249.545,
+      "area_savings_percent": 10.87,
+      "total_power_uw": 33.3873,
+      "leakage_power_uw": 11.833,
+      "dynamic_power_uw": 21.5543,
+      "power_savings_percent": 7.02
+    },
+    "verification": {
+      "status": "PASSED",
+      "control_integrity": "PASSED",
+      "control_errors": 0,
+      "med": 7.704,
+      "wce": 13.0,
+      "er_percent": 96.0,
+      "msed": 78.292,
+      "mred": 0.001119,
+      "sqnr_db": -18.94
+    }
+  },
+  {
+    "circuit_id": "ffnn",
+    "name": "Feed-Forward Neural Network",
+    "domain": "Machine Learning / Edge AI",
+    "target_bound": 8.0,
+    "lsb_width": 4,
+    "flow_status": "SUCCESS",
+    "elapsed_seconds": 4.81,
+    "baseline": {
+      "cell_count": 586,
+      "area_um2": 195.674,
+      "total_power_uw": 24.3788,
+      "leakage_power_uw": 8.9524,
+      "dynamic_power_uw": 15.4264
+    },
+    "approx": {
+      "pruned_nodes": 16,
+      "cell_count": 546,
+      "area_um2": 166.38,
+      "area_savings_percent": 14.97,
+      "total_power_uw": 22.2232,
+      "leakage_power_uw": 7.9404,
+      "dynamic_power_uw": 14.2828,
+      "power_savings_percent": 8.84
+    },
+    "verification": {
+      "status": "PASSED",
+      "control_integrity": "PASSED",
+      "control_errors": 0,
+      "med": 3.962,
+      "wce": 15.0,
+      "er_percent": 51.2,
+      "msed": 40.366,
+      "mred": 0.005136,
+      "sqnr_db": -16.06
+    }
+  },
+  {
+    "circuit_id": "idct",
+    "name": "Inverse Discrete Cosine Transform",
+    "domain": "Multimedia / Video Processing",
+    "target_bound": 16.0,
+    "lsb_width": 4,
+    "flow_status": "SUCCESS",
+    "elapsed_seconds": 2.81,
+    "baseline": {
+      "cell_count": 382,
+      "area_um2": 135.463,
+      "total_power_uw": 16.3546,
+      "leakage_power_uw": 6.0933,
+      "dynamic_power_uw": 10.2613
+    },
+    "approx": {
+      "pruned_nodes": 13,
+      "cell_count": 348,
+      "area_um2": 109.904,
+      "area_savings_percent": 18.87,
+      "total_power_uw": 14.5751,
+      "leakage_power_uw": 5.0979,
+      "dynamic_power_uw": 9.4772,
+      "power_savings_percent": 10.88
+    },
+    "verification": {
+      "status": "PASSED",
+      "control_integrity": "PASSED",
+      "control_errors": 0,
+      "med": 7.678,
+      "wce": 15.0,
+      "er_percent": 94.4,
+      "msed": 78.846,
+      "mred": 0.014601,
+      "sqnr_db": -18.97
+    }
+  }
+]

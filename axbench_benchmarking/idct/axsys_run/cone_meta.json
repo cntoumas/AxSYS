@@ -1,0 +1,65 @@
+{
+  "top_module": "idct",
+  "status": "SUCCESS",
+  "submodule_module": "idct_axc_cone_0",
+  "submodule_instance": "idct_axc_cone_0",
+  "num_safe_cells": 6,
+  "safe_cells": [
+    "$add$/home/christos-ntoumas/AxSYS/axbench_benchmarking/idct/idct.v:19$1746",
+    "$add$/home/christos-ntoumas/AxSYS/axbench_benchmarking/idct/idct.v:19$1747",
+    "$add$/home/christos-ntoumas/AxSYS/axbench_benchmarking/idct/idct.v:19$1748",
+    "$mul$/home/christos-ntoumas/AxSYS/axbench_benchmarking/idct/idct.v:16$1743",
+    "$mul$/home/christos-ntoumas/AxSYS/axbench_benchmarking/idct/idct.v:18$1745",
+    "$procmux$1751"
+  ],
+  "cell_types": {
+    "$add": 3,
+    "$mux": 1,
+    "$mul": 2
+  },
+  "relaxed_signals": [
+    {
+      "wire": "y0",
+      "width": 16,
+      "metric": "MED",
+      "bound": 16.0,
+      "lsb_width": 4
+    }
+  ],
+  "submodule_inputs": [
+    {
+      "name": "X3",
+      "width": 8
+    },
+    {
+      "name": "y0",
+      "width": 16
+    },
+    {
+      "name": "valid_in",
+      "width": 1
+    },
+    {
+      "name": "X1",
+      "width": 8
+    },
+    {
+      "name": "X2",
+      "width": 8
+    },
+    {
+      "name": "X0",
+      "width": 8
+    }
+  ],
+  "submodule_outputs": [
+    {
+      "name": "n1",
+      "width": 16
+    }
+  ],
+  "files": {
+    "submodule_verilog": "/home/christos-ntoumas/AxSYS/axbench_benchmarking/idct/axsys_run/extracted_cone.v",
+    "top_shell_verilog": "/home/christos-ntoumas/AxSYS/axbench_benchmarking/idct/axsys_run/top_shell.v"
+  }
+}
