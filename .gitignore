@@ -9,4 +9,5 @@ work/
 *.vvp
 *.vcd
 axls_workspace/
+saif_run/
 
