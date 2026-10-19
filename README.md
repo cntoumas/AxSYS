@@ -9,12 +9,12 @@ flowchart TD
     subgraph S1["1. RTL Analysis & Extraction"]
         RTL["Input Verilog RTL<br/><code>(* axc_relax *)</code> / <code>(* axc_precise *)</code>"] --> CE["Pyosys RTLIL Cone Extractor"]
         CE --> Taint{"Taint Protection<br/>(Fan-in Isolation)"}
-        Taint -->|Isolate Safe Datapath| Cone["Extracted Cone<br/><code>axc_cone_0.v</code>"]
+        Taint -->|Isolate Safe Datapath| Cone["Extracted Cone<br/><code>extracted_cone.v</code>"]
         Taint -->|Preserve Control Logic| Shell["Top Shell Wrapper<br/><code>top_shell.v</code>"]
     end
 
     subgraph S2["2. Approximate Logic Synthesis"]
-        Cone --> AxLS["AxLS Pruning Engine"]
+        Cone --> AxLS["AxLS Pruning Engine<br/>(Subprocess Isolation)"]
         AxLS --> ApproxCone["Pruned Gate Netlist<br/><code>approx_cone.v</code>"]
     end
 
@@ -36,10 +36,16 @@ flowchart TD
         Sim --> Verdict{"Dual Verdict:<br/>1. Control Integrity (0 errors)<br/>2. Error <= Specified Bound"}
     end
 
+    subgraph S6["6. Power Dissipation Estimation"]
+        FullTop --> PE["Liberty (.lib) Power Estimator"]
+        PE --> PowerReport["Static Leakage + Dynamic Switching<br/>Power & Area Report"]
+    end
+
     style RTL fill:#1e40af,color:#fff
     style Taint fill:#d97706,color:#fff
     style FullTop fill:#047857,color:#fff
     style Verdict fill:#6d28d9,color:#fff
+    style PowerReport fill:#b45309,color:#fff
 ```
 
 ---
@@ -47,10 +53,13 @@ flowchart TD
 ## Key Features
 
 - **Zero RTL Rewrites**: Keep your RTL untouched. Mark relaxable arithmetic outputs with `(* axc_relax *)` and control signals with `(* axc_precise *)`.
-- **Hardware Taint Protection**: Disjoint Set Union (DSU) wire aliasing and backward BFS fan-in tracing guarantee that logic feeding critical control paths is never approximated.
-- **Automated Netlist Surgery**: Yosys RTLIL-level partitioning cleanly separates datapath cones into submodules and restitches synthesized gate netlists back into the top-level shell.
+- **Hardware Taint Protection**: Disjoint Set Union (DSU) wire aliasing and backward BFS fan-in tracing guarantee that logic feeding critical control paths is never approximated ($C_{\text{safe}} = C_{\text{relax}} \setminus C_{\text{precise}}$).
+- **Process Isolation**: Spawns AxLS approximate logic synthesis inside isolated worker subprocesses with timeout protection, avoiding global working directory pollution.
+- **Automated Netlist Surgery**: Yosys RTLIL-level partitioning cleanly separates datapath cones into submodules and restitches synthesized gate netlists back into the top-level shell with dynamic technology library propagation.
 - **Timing Constraint Relaxation**: Automatically generates Synopsys Design Constraints (`.sdc`) with relaxed max-delay or multi-cycle paths on approximate outputs for downstream physical design.
-- **Self-Verifying**: Generates side-by-side miter testbenches to verify zero control corruption and validate Mean Error Distance (MED) or Worst-Case Error (WCE) bounds under cycle-accurate simulation.
+- **Self-Verifying Dual Miter**: Generates side-by-side miter testbenches to verify zero control corruption and validate Mean Error Distance (MED), Worst-Case Error (WCE), Error Rate (ER), Mean Squared Error (MSED), or Mean Relative Error (MRED) under cycle-accurate simulation with signed arithmetic support.
+- **Power & Energy Modeling**: Cycle-accurate standard-cell static leakage and dynamic switching power estimation directly from technology Liberty (`.lib`) models.
+- **Multi-Platform Support**: Evaluated across ASIC standard-cell libraries (NanGate 15nm) and FPGA soft-logic targets (Xilinx 7-Series Artix-7).
 
 ---
 
@@ -91,7 +100,7 @@ endmodule
 |---|---|---|
 | `(* axc_relax = "1" *)` | `"1"` | Identifies the target signal for backward cone extraction and approximate pruning. |
 | `(* axc_precise = "1" *)` | `"1"` | Strict protection flag. Logic feeding these signals is excluded from the approximate cone. |
-| `axc_metric` | `"MED"`, `"WCE"` | Optimization target: Mean Error Distance (`MED`) or Worst-Case Error (`WCE`). |
+| `axc_metric` | `"MED"`, `"WCE"`, `"ER"`, `"MSED"`, `"MRED"` | Optimization error target metric. |
 | `axc_bound` | Numeric string (e.g. `"0.05"`, `"4.0"`) | Maximum error threshold allowed during pruning. |
 | `axc_lsb_width` | Integer string (e.g. `"8"`) | *(Optional)* Restricts heuristic node pruning to the $N$ least significant bits. |
 
@@ -129,10 +138,11 @@ pip install -e .
 
 ### Command Line Interface (CLI)
 
-Run the end-to-end synthesis and verification flow using the installed CLI entry point or python module:
+AxSYS installs four command-line executables:
+
+#### 1. Full Pipeline Orchestrator (`axsys`)
 
 ```bash
-# Using the installed axsys CLI
 axsys \
     --input rtl/design.v \
     --output-dir build/design_run \
@@ -140,12 +150,7 @@ axsys \
     --clk-period 5.0 \
     --samples 500 \
     --verify-cycles 500
-
-# Or invoking via Python
-python -m axsys.flow --input rtl/design.v --output-dir build/design_run
 ```
-
-#### CLI Options
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
@@ -157,6 +162,24 @@ python -m axsys.flow --input rtl/design.v --output-dir build/design_run
 | `-s`, `--samples` | Integer | `300` | Number of simulation vectors for AxLS pruning |
 | `-n`, `--verify-cycles` | Integer | `300` | Number of cycles to run in automated miter verification |
 | `-v`, `--verbose` | Flag | `False` | Enable debug logging |
+
+#### 2. Standalone Cone Extractor (`axsys-cone`)
+
+```bash
+axsys-cone -i rtl/design.v --out-submod extracted_cone.v --out-top top_shell.v --out-meta cone_meta.json
+```
+
+#### 3. Standalone SDC Generator (`axsys-sdc`)
+
+```bash
+axsys-sdc -m cone_meta.json -o final_approx_top.sdc --period 10.0 --mode max_delay
+```
+
+#### 4. Standalone Miter Verifier (`axsys-verify`)
+
+```bash
+axsys-verify --exact rtl/design.v --approx final_approx_top.v --meta cone_meta.json --tech NanGate15nm -n 500
+```
 
 ---
 
@@ -179,10 +202,14 @@ flow = AxcFlow(
 summary = flow.run()
 
 if summary["flow_status"] == "SUCCESS":
-    print(f"Synthesis Succeeded!")
+    print("Synthesis & Verification Succeeded!")
     print(f"Area Savings: {summary['approximation']['area_savings_percent']:.2f}%")
     print(f"Nodes Pruned: {summary['approximation']['pruned_nodes']}")
     print(f"Control Integrity: {summary['verification']['control_integrity']}")
+    if "power" in summary:
+        print(f"Total Power: {summary['power']['total_power_uw']:.3f} uW "
+              f"(Leakage: {summary['power']['leakage_power_uw']:.3f} uW, "
+              f"Dynamic: {summary['power']['dynamic_power_uw']:.3f} uW)")
 ```
 
 ---
@@ -198,14 +225,28 @@ build/design_run/
 ├── top_shell.v             # Golden top wrapper with submod instance
 ├── approx_cone.v           # Synthesized and pruned gate-level netlist
 ├── final_approx_top.v      # Fully reintegrated, simulatable top-level netlist
-└── final_approx_top.sdc    # Generated timing constraints with relaxed output paths
+├── final_approx_top.sdc    # Generated timing constraints with relaxed output paths
+└── flow_summary.json       # End-to-end execution summary (area, power, verification metrics)
 ```
+
+---
+
+## Examples & Benchmarks
+
+The repository includes open-source accelerator benchmarks and validation suites in `examples/`:
+
+- **MAC Processing Element** (`examples/mac/`): Minimal signed multiply-accumulate unit for fast end-to-end sanity tests.
+- **Multi-Cone Sobel Operator** (`examples/sobel/`): 3x3 image convolution engine with 3 parallel approximation cones (`gx_abs`, `gy_abs`, `sobel_out`) and Pareto tradeoff sweeps.
+- **Sequential INT8 Systolic PE** (`examples/systolic_pe/`): Deep learning processing element with strict control protection (`valid_out`, `a_out`, `b_out`) and up to 18.6% power savings.
+- **2D Systolic Tensor Cores** (`examples/systolic_accelerator/`): Scaled $4\times 4$ and $8\times 8$ matrix multiplication cores evaluated on:
+  - **NanGate 15nm ASIC**: Up to $1,938\,\mu m^2$ area and $15.4\%$ power reduction.
+  - **Xilinx Artix-7 FPGA**: Soft-logic LUT/FF dead-code pruning, carry chain reduction, and DSP slice pressure relief.
 
 ---
 
 ## Testing
 
-AxSYS includes self-contained test suites covering RTLIL extraction, taint analysis, and end-to-end integration:
+Run the automated test suite with pytest:
 
 ```bash
 pytest -v
@@ -217,21 +258,34 @@ pytest -v
 
 ```
 .
-├── src/
-│   ├── __init__.py
-│   ├── flow.py           # Top-level pipeline orchestrator & CLI
-│   ├── cone_extractor.py # RTLIL cone extraction, DSU aliasing & taint protection
-│   ├── axls_bridge.py    # Subprocess bridge to AxLS heuristic pruning
-│   ├── reintegrator.py   # Hierarchical netlist re-stitching
-│   ├── sdc_generator.py  # SDC timing constraint generator
-│   └── verifier.py       # Dual-miter automated testbench harness
+├── axsys/
+│   ├── __init__.py           # Package exports
+│   ├── flow.py               # Top-level pipeline orchestrator & CLI
+│   ├── cone_extractor.py     # RTLIL cone extraction, DSU aliasing & taint protection
+│   ├── axls_bridge.py        # Subprocess-isolated bridge to AxLS pruning
+│   ├── reintegrator.py       # Hierarchical netlist re-stitching
+│   ├── sdc_generator.py      # SDC timing constraint generator
+│   ├── verifier.py           # Dual-miter automated testbench harness
+│   └── power_estimator.py    # Liberty (.lib) static leakage & dynamic power model
+├── examples/
+│   ├── mac/                  # Single MAC processing element
+│   ├── sobel/                # Multi-cone Sobel operator
+│   ├── systolic_pe/          # INT8 Systolic PE power/area sweep
+│   └── systolic_accelerator/ # 4x4 and 8x8 2D systolic tensor arrays (ASIC + FPGA)
+├── reports/                  # Evaluation dashboards, visual plots, and status audits
 ├── tests/
 │   ├── conftest.py
-│   ├── test_cone_extractor.py # Unit tests for logic extraction & taint isolation
-│   └── test_flow.py           # End-to-end pipeline integration tests
+│   ├── test_cone_extractor.py
+│   ├── test_sdc_generator.py
+│   ├── test_power_estimator.py
+│   ├── test_reintegrator.py
+│   ├── test_verifier.py
+│   └── test_flow.py
 ├── third_party/
-│   └── AxLS/             # Approximate Logic Synthesis engine
+│   └── AxLS/                 # Approximate Logic Synthesis engine
+├── pyproject.toml            # PEP 621 package and build specification
 ├── requirements.txt
+├── LICENSE                   # MIT License
 └── README.md
 ```
 
@@ -239,4 +293,4 @@ pytest -v
 
 ## License
 
-This project is licensed under the Apache License 2.0. See `LICENSE` for details.
+This project is licensed under the MIT License. See [LICENSE](file:///home/christos-ntoumas/AxSYS/LICENSE) for details.
