@@ -80,16 +80,16 @@ class MiterVerifier:
     def _inspect_module_ports(self) -> Dict[str, Any]:
         """Inspect input and output ports of top module."""
         design = ys.Design()
-        ys.run_pass(f"read_verilog {self.exact_vlog}; hierarchy -check -auto-top; proc; opt_clean", design)
+        ys.run_pass(f"read_verilog -sv {self.exact_vlog}; hierarchy -check -auto-top; proc; opt_clean", design)
         top = design.top_module()
         inputs = []
         outputs = []
         for wname_id, wire in top.wires_.items():
             name = wname_id.str().lstrip("\\")
             if wire.port_input:
-                inputs.append({"name": name, "width": wire.width})
+                inputs.append({"name": name, "width": wire.width, "is_signed": bool(wire.is_signed)})
             if wire.port_output:
-                outputs.append({"name": name, "width": wire.width})
+                outputs.append({"name": name, "width": wire.width, "is_signed": bool(wire.is_signed)})
         return {"inputs": inputs, "outputs": outputs}
 
     def generate_miter_tb(self, work_dir: Path, ports_info: Dict[str, Any]) -> Path:
@@ -116,17 +116,21 @@ class MiterVerifier:
         for inp in inputs:
             name = inp["name"]
             width = inp["width"]
+            is_signed = inp.get("is_signed", False)
             if name not in clk_inputs and name not in rst_inputs:
+                signed_str = "signed " if is_signed else ""
                 range_str = f"[{width-1}:0] " if width > 1 else ""
-                lines.append(f"  reg {range_str}{name};")
+                lines.append(f"  reg {signed_str}{range_str}{name};")
 
         # Declare output wires for exact and approx
         for out in outputs:
             name = out["name"]
             width = out["width"]
+            is_signed = out.get("is_signed", False)
+            signed_str = "signed " if is_signed else ""
             range_str = f"[{width-1}:0] " if width > 1 else ""
-            lines.append(f"  wire {range_str}{name}_exact;")
-            lines.append(f"  wire {range_str}{name}_approx;")
+            lines.append(f"  wire {signed_str}{range_str}{name}_exact;")
+            lines.append(f"  wire {signed_str}{range_str}{name}_approx;")
 
         lines.extend([
             "",

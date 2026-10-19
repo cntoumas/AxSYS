@@ -21,6 +21,7 @@ from typing import Any, Dict, Optional
 from axsys.axls_bridge import AxlsBridge
 from axsys.cone_extractor import ConeExtractor
 from axsys.reintegrator import Reintegrator
+from axsys.power_estimator import PowerEstimator
 from axsys.sdc_generator import SdcGenerator
 from axsys.verifier import MiterVerifier
 
@@ -175,6 +176,24 @@ class AxcFlow:
         )
         verify_result = verifier.verify()
 
+        # -------------------------------------------------------------
+        # STEP 6: Power Dissipation Estimation
+        # -------------------------------------------------------------
+        logger.info("--- Step 6: Power Dissipation Estimation ---")
+        power_info: Dict[str, Any] = {}
+        try:
+            clk_mhz = 1000.0 / self.clk_period_ns if self.clk_period_ns > 0 else 100.0
+            power_estimator = PowerEstimator(tech=self.tech, clk_mhz=clk_mhz)
+            power_info = power_estimator.evaluate_netlist(final_top_vlog)
+            logger.info(
+                "Power dissipation: Total=%.3f uW (Leakage=%.3f uW, Dynamic=%.3f uW)",
+                power_info["total_power_uw"],
+                power_info["leakage_power_uw"],
+                power_info["dynamic_power_uw"],
+            )
+        except Exception as exc:
+            logger.warning("Power estimation could not be completed: %s", exc)
+
         elapsed = time.time() - start_time
         logger.info("=== FLOW FINISHED IN %.2f SECONDS ===", elapsed)
 
@@ -194,6 +213,7 @@ class AxcFlow:
                 "approx_area": approx_result.get("final_area"),
                 "area_savings_percent": approx_result.get("area_savings_percent"),
             },
+            "power": power_info,
             "verification": verify_result,
             "generated_files": {
                 "top_shell": str(top_shell_vlog),
