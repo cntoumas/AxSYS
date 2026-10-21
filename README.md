@@ -258,16 +258,18 @@ build/design_run/
 
 ---
 
-## Examples & Benchmarks
+## Benchmarks
 
-The repository includes open-source accelerator benchmarks and validation suites in `examples/`:
+The repository includes standard hardware benchmark circuits in `benchmarks/`:
 
-- **MAC Processing Element** (`examples/mac/`): Minimal signed multiply-accumulate unit for fast end-to-end sanity tests.
-- **Multi-Cone Sobel Operator** (`examples/sobel/`): 3x3 image convolution engine with 3 parallel approximation cones (`gx_abs`, `gy_abs`, `sobel_out`) and Pareto tradeoff sweeps.
-- **Sequential INT8 Systolic PE** (`examples/systolic_pe/`): Deep learning processing element with strict control protection (`valid_out`, `a_out`, `b_out`) and up to 18.6% power savings.
-- **2D Systolic Tensor Cores** (`examples/systolic_accelerator/`): Scaled $4\times 4$ and $8\times 8$ matrix multiplication cores evaluated on:
-  - **NanGate 15nm ASIC**: Up to $1,938\,\mu m^2$ area and $15.4\%$ power reduction.
-  - **Xilinx Artix-7 FPGA**: Soft-logic LUT/FF dead-code pruning, carry chain reduction, and DSP slice pressure relief.
+- **FIR Filter** (`benchmarks/fir/fir.v`): DSP finite impulse response filter.
+- **Sobel Operator** (`benchmarks/sobel/sobel.v`): 3x3 spatial image edge detection engine.
+- **IDCT** (`benchmarks/idct/idct.v`): Inverse discrete cosine transform for video/image decoding.
+- **InverseK2J** (`benchmarks/inversek2j/inversek2j.v`): 2-joint robotic arm kinematics coordinate resolver.
+- **FFNN** (`benchmarks/ffnn/ffnn.v`): Feedforward neural network multi-layer perceptron.
+- **MAC Unit** (`benchmarks/mac/mac.v`): Signed fixed-point multiply-accumulate datapath.
+- **Systolic PE** (`benchmarks/systolic_pe/pe.sv`): Deep learning INT8 systolic array processing element.
+- **RGB2YCbCr** (`benchmarks/rgb2ycbcr/rgb2ycbcr.v`): BT.601 color space transformation matrix.
 
 ---
 
@@ -285,27 +287,26 @@ pytest -v
 
 ```
 .
-├── axsys/
-│   ├── __init__.py           # Package exports
-│   ├── flow.py               # Top-level pipeline orchestrator & CLI (`axsys`)
-│   ├── cone_extractor.py     # RTLIL cone extraction, DSU aliasing & taint protection (`axsys-cone`)
-│   ├── axls_bridge.py        # Subprocess-isolated tournament pruning engine
-│   ├── sweep.py              # Pareto curve exploration engine (`axsys-sweep`)
-│   ├── budgeter.py           # Multi-stage error budget tightening (`axsys-budget`)
-│   ├── trace_extractor.py    # Pipeline-realistic active stimulus vector dumper
-│   ├── reintegrator.py       # Hierarchical netlist re-stitching
-│   ├── sdc_generator.py      # SDC timing constraint generator (`axsys-sdc`)
-│   ├── verifier.py           # Formal SAT solver & dual-miter verifier (`axsys-verify`)
-│   ├── power_estimator.py    # Liberty (.lib) static leakage & dynamic power model
-│   └── saif_analyzer.py      # Vector-driven IEEE SAIF switching activity analyzer
-├── axbench_benchmarking/     # Standard AxBench hardware benchmark suite (fir, sobel, idct, ...)
-├── examples/                 # Target designs (mac, sobel, systolic_pe, rgb2ycbcr, ...)
-├── tests/                    # 40 comprehensive unit & formal verification tests
+├── axsys/                     # Core framework package
+│   ├── __init__.py            # Package exports
+│   ├── flow.py                # Top-level pipeline orchestrator & CLI (`axsys`)
+│   ├── cone_extractor.py      # RTLIL cone extraction, DSU aliasing & taint protection (`axsys-cone`)
+│   ├── axls_bridge.py         # Subprocess-isolated tournament pruning engine
+│   ├── sweep.py               # Pareto curve exploration engine (`axsys-sweep`)
+│   ├── budgeter.py            # Multi-stage error budget tightening (`axsys-budget`)
+│   ├── trace_extractor.py     # Pipeline-realistic active stimulus vector dumper
+│   ├── reintegrator.py        # Hierarchical netlist re-stitching
+│   ├── sdc_generator.py       # SDC timing constraint generator (`axsys-sdc`)
+│   ├── verifier.py            # Formal SAT solver & dual-miter verifier (`axsys-verify`)
+│   ├── power_estimator.py     # Liberty (.lib) static leakage & dynamic power model
+│   └── saif_analyzer.py       # Vector-driven IEEE SAIF switching activity analyzer
+├── benchmarks/                # Hardware benchmark suite (fir, sobel, idct, mac, pe, ...)
+├── tests/                     # 40 comprehensive unit & formal verification tests
 ├── third_party/
-│   └── AxLS/                 # Approximate Logic Synthesis engine & NanGate15nm tech library
-├── pyproject.toml            # PEP 621 package and build specification
-├── requirements.txt          # Python dependencies
-├── LICENSE                   # MIT License
+│   └── AxLS/                  # Approximate Logic Synthesis engine & NanGate15nm tech library
+├── pyproject.toml             # PEP 621 package and build specification
+├── requirements.txt           # Python dependencies
+├── LICENSE                    # MIT License
 └── README.md
 ```
 
