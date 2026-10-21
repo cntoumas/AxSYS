@@ -44,6 +44,10 @@ class CascadedBudgeter:
         stimulus_file: Optional[str | Path] = None,
         enable_formal: bool = True,
         formal_timeout: int = 60,
+        target: str = "asic",
+        fpga_family: str = "xc7",
+        fpga_device: str = "xc7a35t",
+        fpga_nodsp: bool = True,
     ):
         self.input_verilog = Path(input_verilog).resolve()
         self.output_dir = Path(output_dir).resolve()
@@ -63,6 +67,14 @@ class CascadedBudgeter:
         self.stimulus_file = Path(stimulus_file).resolve() if stimulus_file else None
         self.enable_formal = enable_formal
         self.formal_timeout = formal_timeout
+        self.target = target.lower()
+        self.fpga_family = fpga_family.lower()
+        self.fpga_device = fpga_device.lower()
+        self.fpga_nodsp = fpga_nodsp
+
+        if self.tech.lower() in ("xc7", "artix7", "xilinx"):
+            self.target = "fpga"
+            self.fpga_family = "xc7"
 
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -106,6 +118,10 @@ class CascadedBudgeter:
                     enable_formal=self.enable_formal,
                     formal_timeout=self.formal_timeout,
                     override_bound=current_cone_budget,
+                    target=self.target,
+                    fpga_family=self.fpga_family,
+                    fpga_device=self.fpga_device,
+                    fpga_nodsp=self.fpga_nodsp,
                 )
                 flow_res = flow.run()
                 iter_elapsed = time.time() - iter_start
@@ -220,6 +236,10 @@ def main() -> None:
     parser.add_argument("--min-budget", type=float, default=0.01, help="Minimum allowable per-cone budget")
     parser.add_argument("--contraction-factor", type=float, default=0.9, help="Safety contraction factor (default 0.9)")
     parser.add_argument("-t", "--tech", default="NanGate15nm", help="Standard cell tech library")
+    parser.add_argument("--target", default="asic", choices=["asic", "fpga"], help="Target architecture (asic, fpga)")
+    parser.add_argument("--fpga-family", default="xc7", help="Target FPGA family (default: xc7)")
+    parser.add_argument("--fpga-device", default="xc7a35t", help="Target FPGA device (default: xc7a35t)")
+    parser.add_argument("--allow-dsp", action="store_true", help="Allow DSP slice inference on FPGA")
     parser.add_argument("--clk", dest="clk", default="clk", help="Clock port name")
     parser.add_argument("--period", dest="period", type=float, default=10.0, help="Clock period in ns")
     parser.add_argument("-s", "--samples", type=int, default=200, help="AxLS simulation samples")
@@ -255,6 +275,10 @@ def main() -> None:
         stimulus_file=args.stimulus_file,
         enable_formal=not args.no_formal,
         formal_timeout=args.formal_timeout,
+        target=args.target,
+        fpga_family=args.fpga_family,
+        fpga_device=args.fpga_device,
+        fpga_nodsp=not args.allow_dsp,
     )
     result = budgeter.optimize_budgets()
     print(json.dumps({

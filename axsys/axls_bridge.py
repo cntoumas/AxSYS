@@ -37,6 +37,8 @@ from pruning_algorithms.probprun import GetOneNode
 from synthesis import resynthesis, ys_get_area
 from utils import read_dataset
 
+from axsys.fpga_estimator import FpgaEstimator
+
 logger = logging.getLogger("axls_bridge")
 
 
@@ -170,12 +172,39 @@ class AxlsBridge:
         samples: int = 500,
         work_dir: Optional[str | Path] = None,
         trace_hex_path: Optional[str | Path] = None,
+        target: str = "asic",
+        fpga_family: str = "xc7",
+        fpga_device: str = "xc7a35t",
+        fpga_nodsp: bool = True,
     ):
         self.cone_vlog = Path(cone_verilog_path).resolve()
         self.tech = tech
         self.samples = samples
         self.work_dir = Path(work_dir).resolve() if work_dir else None
         self.trace_hex_path = Path(trace_hex_path).resolve() if trace_hex_path else None
+        self.target = target.lower()
+        self.fpga_family = fpga_family.lower()
+        self.fpga_device = fpga_device.lower()
+        self.fpga_nodsp = fpga_nodsp
+
+        # Auto-detect FPGA from tech string if applicable
+        if self.tech.lower() in ("xc7", "artix7", "xilinx"):
+            self.target = "fpga"
+            self.fpga_family = "xc7"
+
+    def _evaluate_netlist_cost(self, netlist_path: str | Path, topmodule: str) -> float:
+        """Evaluate circuit cost: Logic Cells (LCs) for FPGA, or standard-cell gate area (um^2) for ASIC."""
+        if self.target == "fpga":
+            try:
+                estimator = FpgaEstimator(family=self.fpga_family, device=self.fpga_device, nodsp=self.fpga_nodsp)
+                res = estimator.evaluate_netlist(netlist_path, top_module=topmodule)
+                return float(res["estimated_lcs"])
+            except Exception as e:
+                logger.warning("FPGA evaluation failed on %s: %s", netlist_path, e)
+                return 999999.0
+        else:
+            area_val = ys_get_area(str(netlist_path), self.tech, topmodule)
+            return float(area_val) if area_val else 0.0
 
     def optimize(
         self,
@@ -226,7 +255,12 @@ class AxlsBridge:
             "-a", str(method),
             "--work-dir", str(run_dir),
             "-o", str(target_out),
+            "--target", self.target,
+            "--fpga-family", self.fpga_family,
+            "--fpga-device", self.fpga_device,
         ]
+        if not self.fpga_nodsp:
+            cmd.append("--allow-dsp")
         if lsb_width is not None:
             cmd.extend(["--lsb-width", str(lsb_width)])
         if eff_trace:
@@ -310,10 +344,11 @@ class AxlsBridge:
 
             os.chdir(run_dir)
 
-            circuit = Circuit(str(local_cone_v), self.tech)
-            initial_area_val = ys_get_area(circuit.netl_file, self.tech, circuit.topmodule)
-            initial_area = float(initial_area_val) if initial_area_val else 0.0
-            logger.info("Initial circuit area (%s): %.2f", self.tech, initial_area)
+            synth_tech = "NanGate15nm" if self.tech.lower() in ("xc7", "artix7", "xilinx") else self.tech
+            circuit = Circuit(str(local_cone_v), synth_tech)
+            initial_area = self._evaluate_netlist_cost(circuit.netl_file, circuit.topmodule)
+            metric_label = "Logic Cells" if self.target == "fpga" else f"um^2 ({self.tech})"
+            logger.info("Initial circuit cost [%s]: %.2f", metric_label, initial_area)
 
             tb_path = str((run_dir / "tb_cone.v").resolve())
             dataset_path = str((run_dir / "dataset.txt").resolve())
@@ -454,7 +489,8 @@ class AxlsBridge:
         """Method 1: InOuts greedy fanin pruning."""
         t_start = time.time()
         logger.info("[InOuts] Starting greedy fanin pruning...")
-        circuit = Circuit(str(local_cone_v), self.tech)
+        synth_tech = "NanGate15nm" if self.tech.lower() in ("xc7", "artix7", "xilinx") else self.tech
+        circuit = Circuit(str(local_cone_v), synth_tech)
         depricable_nodes = GetOutputs(circuit.netl_root, candidate_outputs)
         candidate_node_names = [n.attrib["var"] for n in depricable_nodes]
         logger.info("[InOuts] Found %d candidate nodes", len(candidate_node_names))
@@ -479,9 +515,8 @@ class AxlsBridge:
                 circuit.undodelete(node_name)
 
         raw_approx_v = circuit.write_to_disk("approx_inouts_raw")
-        clean_netlist_path = resynthesis(raw_approx_v, self.tech, circuit.topmodule)
-        final_area_val = ys_get_area(clean_netlist_path, self.tech, circuit.topmodule)
-        final_area = float(final_area_val) if final_area_val else initial_area
+        clean_netlist_path = resynthesis(raw_approx_v, synth_tech, circuit.topmodule)
+        final_area = self._evaluate_netlist_cost(clean_netlist_path, circuit.topmodule)
 
         area_savings = 0.0
         if initial_area > 0:
@@ -522,7 +557,8 @@ class AxlsBridge:
         """Method 2: ProbPrun probabilistic signal-activity pruning."""
         t_start = time.time()
         logger.info("[ProbPrun] Starting probabilistic activity pruning...")
-        circuit = Circuit(str(local_cone_v), self.tech)
+        synth_tech = "NanGate15nm" if self.tech.lower() in ("xc7", "artix7", "xilinx") else self.tech
+        circuit = Circuit(str(local_cone_v), synth_tech)
 
         vcd_p = run_dir / f"{topmodule}.vcd"
         duty = parse_vcd_duty_cycle(vcd_p, topmodule)
@@ -561,9 +597,8 @@ class AxlsBridge:
                 circuit.undodelete(var)
 
         raw_approx_v = circuit.write_to_disk("approx_probprun_raw")
-        clean_netlist_path = resynthesis(raw_approx_v, self.tech, circuit.topmodule)
-        final_area_val = ys_get_area(clean_netlist_path, self.tech, circuit.topmodule)
-        final_area = float(final_area_val) if final_area_val else initial_area
+        clean_netlist_path = resynthesis(raw_approx_v, synth_tech, circuit.topmodule)
+        final_area = self._evaluate_netlist_cost(clean_netlist_path, circuit.topmodule)
 
         area_savings = 0.0
         if initial_area > 0:
@@ -676,7 +711,8 @@ class AxlsBridge:
             depth_candidates = [2, 4]
             best_cand: Optional[Dict[str, Any]] = None
 
-            tech_vlog = str(Path(__file__).resolve().parent.parent / "third_party" / "AxLS" / "templates" / f"{self.tech}.v")
+            synth_tech = "NanGate15nm" if self.tech.lower() in ("xc7", "artix7", "xilinx") else self.tech
+            tech_vlog = str(Path(__file__).resolve().parent.parent / "third_party" / "AxLS" / "templates" / f"{synth_tech}.v")
 
             for depth in depth_candidates:
                 verilog_lines = [
@@ -701,7 +737,7 @@ class AxlsBridge:
                 dt_vlog = run_dir / f"dt_depth_{depth}.v"
                 dt_vlog.write_text("\n".join(verilog_lines) + "\n", encoding="utf-8")
 
-                clean_v = resynthesis(str(dt_vlog), self.tech, topmodule)
+                clean_v = resynthesis(str(dt_vlog), synth_tech, topmodule)
                 sim_bin = str((run_dir / f"sim_dt_{depth}").resolve())
 
                 # Simulate netlist with iverilog
@@ -721,8 +757,7 @@ class AxlsBridge:
                     continue
 
                 err = compute_error(metric_normalized, exact_out_path, approx_out_path)
-                area_val = ys_get_area(clean_v, self.tech, topmodule)
-                area = float(area_val) if area_val else initial_area
+                area = self._evaluate_netlist_cost(clean_v, topmodule)
 
                 cand_info = {
                     "depth": depth,
@@ -821,7 +856,12 @@ class AxlsBridge:
                 "-s", str(self.samples),
                 "-a", m,
                 "--work-dir", str(m_dir),
+                "--target", self.target,
+                "--fpga-family", self.fpga_family,
+                "--fpga-device", self.fpga_device,
             ]
+            if not self.fpga_nodsp:
+                cmd.append("--allow-dsp")
             if lsb_width is not None:
                 cmd.extend(["--lsb-width", str(lsb_width)])
             if eff_trace:
@@ -980,6 +1020,10 @@ def main() -> None:
     parser.add_argument("-a", "--method", default="auto", choices=["auto", "inouts", "probprun", "decisiontree"], help="Approximation backend algorithm")
     parser.add_argument("--lsb-width", type=int, default=None, help="LSB bit-width to restrict pruning")
     parser.add_argument("-t", "--tech", default="NanGate15nm", help="Standard cell tech library")
+    parser.add_argument("--target", default="asic", choices=["asic", "fpga"], help="Target architecture (asic, fpga)")
+    parser.add_argument("--fpga-family", default="xc7", help="Target FPGA family (default: xc7)")
+    parser.add_argument("--fpga-device", default="xc7a35t", help="Target FPGA device (default: xc7a35t)")
+    parser.add_argument("--allow-dsp", action="store_true", help="Allow DSP slice inference on FPGA")
     parser.add_argument("-s", "--samples", type=int, default=500, help="Simulation samples")
     parser.add_argument("--trace-hex", default=None, help="Path to realistic datapath trace .hex file")
     parser.add_argument("--work-dir", default=None, help="Working directory for intermediate artifacts")
@@ -995,6 +1039,10 @@ def main() -> None:
         samples=args.samples,
         work_dir=args.work_dir,
         trace_hex_path=args.trace_hex,
+        target=args.target,
+        fpga_family=args.fpga_family,
+        fpga_device=args.fpga_device,
+        fpga_nodsp=not args.allow_dsp,
     )
     result = bridge.optimize(
         metric=args.metric,

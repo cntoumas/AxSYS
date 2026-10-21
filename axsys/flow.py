@@ -20,6 +20,7 @@ from typing import Any, Dict, Optional
 
 from axsys.axls_bridge import AxlsBridge
 from axsys.cone_extractor import ConeExtractor
+from axsys.fpga_estimator import FpgaEstimator
 from axsys.power_estimator import PowerEstimator
 from axsys.reintegrator import Reintegrator
 from axsys.sdc_generator import SdcGenerator
@@ -48,6 +49,10 @@ class AxcFlow:
         formal_timeout: int = 60,
         axc_method: str = "auto",
         override_bound: Optional[float] = None,
+        target: str = "asic",
+        fpga_family: str = "xc7",
+        fpga_device: str = "xc7a35t",
+        fpga_nodsp: bool = True,
     ):
         self.input_verilog = Path(input_verilog).resolve()
         self.output_dir = Path(output_dir).resolve()
@@ -63,6 +68,15 @@ class AxcFlow:
         self.formal_timeout = formal_timeout
         self.axc_method = axc_method
         self.override_bound = float(override_bound) if override_bound is not None else None
+        self.target = target.lower()
+        self.fpga_family = fpga_family.lower()
+        self.fpga_device = fpga_device.lower()
+        self.fpga_nodsp = fpga_nodsp
+
+        # Auto-detect FPGA from tech string
+        if self.tech.lower() in ("xc7", "artix7", "xilinx"):
+            self.target = "fpga"
+            self.fpga_family = "xc7"
 
         # Resolve tech Verilog library path
         tech_p = Path(self.tech)
@@ -171,6 +185,10 @@ class AxcFlow:
             samples=self.sim_samples,
             work_dir=axls_work_dir,
             trace_hex_path=trace_hex_path,
+            target=self.target,
+            fpga_family=self.fpga_family,
+            fpga_device=self.fpga_device,
+            fpga_nodsp=self.fpga_nodsp,
         )
 
         approx_result = bridge.optimize(
@@ -230,22 +248,51 @@ class AxcFlow:
         verify_result = verifier.verify()
 
         # -------------------------------------------------------------
-        # STEP 6: Power Dissipation Estimation
+        # STEP 6: Target Evaluation (FPGA Resources or ASIC Power/Area)
         # -------------------------------------------------------------
-        logger.info("--- Step 6: Power Dissipation Estimation ---")
         power_info: Dict[str, Any] = {}
-        try:
-            clk_mhz = 1000.0 / self.clk_period_ns if self.clk_period_ns > 0 else 100.0
-            power_estimator = PowerEstimator(tech=self.tech, clk_mhz=clk_mhz)
-            power_info = power_estimator.evaluate_netlist(final_top_vlog)
-            logger.info(
-                "Power dissipation: Total=%.3f uW (Leakage=%.3f uW, Dynamic=%.3f uW)",
-                power_info["total_power_uw"],
-                power_info["leakage_power_uw"],
-                power_info["dynamic_power_uw"],
-            )
-        except Exception as exc:
-            logger.warning("Power estimation could not be completed: %s", exc)
+        fpga_info: Dict[str, Any] = {}
+
+        if self.target == "fpga":
+            logger.info("--- Step 6: FPGA Resource Estimation & Utilization (%s / %s) ---", self.fpga_family, self.fpga_device)
+            try:
+                fpga_estimator = FpgaEstimator(
+                    family=self.fpga_family,
+                    device=self.fpga_device,
+                    nodsp=self.fpga_nodsp,
+                )
+                fpga_info = fpga_estimator.compare_exact_vs_approx(
+                    exact_netlist=self.input_verilog,
+                    approx_netlist=final_top_vlog,
+                    top_module=cone_result.get("top_module"),
+                    work_dir=self.output_dir,
+                )
+                logger.info(
+                    "FPGA Resource Savings [%s]: LUTs=%d (-%.2f%%) | CARRY4=%d (-%.2f%%) | Estimated LCs=%d (-%.2f%%)",
+                    self.fpga_device,
+                    fpga_info["luts_saved"],
+                    fpga_info["lut_reduction_pct"],
+                    fpga_info["carry_saved"],
+                    fpga_info["carry_reduction_pct"],
+                    fpga_info["lcs_saved"],
+                    fpga_info["lc_reduction_pct"],
+                )
+            except Exception as exc:
+                logger.warning("FPGA resource estimation could not be completed: %s", exc)
+        else:
+            logger.info("--- Step 6: Power Dissipation Estimation ---")
+            try:
+                clk_mhz = 1000.0 / self.clk_period_ns if self.clk_period_ns > 0 else 100.0
+                power_estimator = PowerEstimator(tech=self.tech, clk_mhz=clk_mhz)
+                power_info = power_estimator.evaluate_netlist(final_top_vlog)
+                logger.info(
+                    "Power dissipation: Total=%.3f uW (Leakage=%.3f uW, Dynamic=%.3f uW)",
+                    power_info["total_power_uw"],
+                    power_info["leakage_power_uw"],
+                    power_info["dynamic_power_uw"],
+                )
+            except Exception as exc:
+                logger.warning("Power estimation could not be completed: %s", exc)
 
         elapsed = time.time() - start_time
         logger.info("=== FLOW FINISHED IN %.2f SECONDS ===", elapsed)
@@ -254,6 +301,7 @@ class AxcFlow:
 
         summary: Dict[str, Any] = {
             "flow_status": "SUCCESS" if verify_result.get("status") == "PASSED" else "VERIFICATION_FAILED",
+            "target": self.target,
             "elapsed_seconds": round(elapsed, 2),
             "top_module": cone_result.get("top_module", "unknown"),
             "submodule_module": cone_result.get("submodule_module", ""),
@@ -278,6 +326,7 @@ class AxcFlow:
                 "area_savings_percent": approx_result.get("area_savings_percent"),
             },
             "power": power_info,
+            "fpga": fpga_info,
             "verification": verify_result,
             "generated_files": {
                 "top_shell": str(top_shell_vlog),
@@ -303,6 +352,10 @@ def main() -> None:
     parser.add_argument("-i", "--input", required=True, help="Input annotated Verilog file")
     parser.add_argument("-o", "--output-dir", default="build/axc_output", help="Output directory")
     parser.add_argument("-t", "--tech", default="NanGate15nm", help="Standard cell tech library")
+    parser.add_argument("--target", default="asic", choices=["asic", "fpga"], help="Target architecture: asic (NanGate 15nm) or fpga (Xilinx 7-Series)")
+    parser.add_argument("--fpga-family", default="xc7", help="Target FPGA family (default: xc7)")
+    parser.add_argument("--fpga-device", default="xc7a35t", help="Target FPGA reference device (default: xc7a35t)")
+    parser.add_argument("--allow-dsp", action="store_true", help="Allow DSP slice inference on FPGA (default maps arithmetic to soft-logic LUTs/carry)")
     parser.add_argument("--clk", "--clk-port", dest="clk", default="clk", help="Clock port name")
     parser.add_argument("--period", "--clk-period", dest="period", type=float, default=10.0, help="Clock period in ns")
     parser.add_argument("-s", "--samples", type=int, default=300, help="AxLS simulation samples")
@@ -337,6 +390,10 @@ def main() -> None:
         formal_timeout=args.formal_timeout,
         axc_method=args.method,
         override_bound=args.bound,
+        target=args.target,
+        fpga_family=args.fpga_family,
+        fpga_device=args.fpga_device,
+        fpga_nodsp=not args.allow_dsp,
     )
     result = flow.run()
     print(json.dumps(result, indent=2))

@@ -44,6 +44,10 @@ class ParetoSweeper:
         stimulus_file: Optional[str | Path] = None,
         enable_formal: bool = True,
         formal_timeout: int = 60,
+        target: str = "asic",
+        fpga_family: str = "xc7",
+        fpga_device: str = "xc7a35t",
+        fpga_nodsp: bool = True,
     ):
         self.input_verilog = Path(input_verilog).resolve()
         self.output_dir = Path(output_dir).resolve()
@@ -59,6 +63,14 @@ class ParetoSweeper:
         self.stimulus_file = Path(stimulus_file).resolve() if stimulus_file else None
         self.enable_formal = enable_formal
         self.formal_timeout = formal_timeout
+        self.target = target.lower()
+        self.fpga_family = fpga_family.lower()
+        self.fpga_device = fpga_device.lower()
+        self.fpga_nodsp = fpga_nodsp
+
+        if self.tech.lower() in ("xc7", "artix7", "xilinx"):
+            self.target = "fpga"
+            self.fpga_family = "xc7"
 
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -110,17 +122,23 @@ class ParetoSweeper:
                     formal_timeout=self.formal_timeout,
                     axc_method=self.method,
                     override_bound=bound,
+                    target=self.target,
+                    fpga_family=self.fpga_family,
+                    fpga_device=self.fpga_device,
+                    fpga_nodsp=self.fpga_nodsp,
                 )
                 flow_summary = flow.run()
                 point_elapsed = time.time() - point_start
 
                 approx = flow_summary.get("approximation", {})
                 power = flow_summary.get("power", {})
+                fpga = flow_summary.get("fpga", {})
                 formal_ctrl = flow_summary.get("formal_control_status", "DISABLED")
                 formal_wce = flow_summary.get("formal_wce_status", "DISABLED")
 
                 row = {
                     "bound": bound,
+                    "target": self.target,
                     "flow_status": flow_summary.get("flow_status", "UNKNOWN"),
                     "metric": self.metric,
                     "measured_error": approx.get("measured_error", 0.0),
@@ -128,9 +146,15 @@ class ParetoSweeper:
                     "initial_area": approx.get("initial_area", 0.0),
                     "approx_area": approx.get("approx_area", 0.0),
                     "area_savings_percent": approx.get("area_savings_percent", 0.0),
-                    "initial_power_uw": power.get("total_power_uw", 0.0),  # Top-level estimated power
+                    "initial_power_uw": power.get("total_power_uw", 0.0),
                     "approx_power_uw": power.get("total_power_uw", 0.0),
                     "power_savings_percent": power.get("power_savings_percent", 0.0),
+                    "total_luts": fpga.get("approx", {}).get("total_luts", 0),
+                    "luts_saved": fpga.get("luts_saved", 0),
+                    "lut_reduction_pct": fpga.get("lut_reduction_pct", 0.0),
+                    "carry4": fpga.get("approx", {}).get("carry4", 0),
+                    "estimated_lcs": fpga.get("approx", {}).get("estimated_lcs", 0),
+                    "lc_reduction_pct": fpga.get("lc_reduction_pct", 0.0),
                     "control_sat_status": formal_ctrl,
                     "wce_sat_status": formal_wce,
                     "elapsed_seconds": round(point_elapsed, 2),
@@ -281,6 +305,10 @@ def main() -> None:
     parser.add_argument("-m", "--metric", default="med", help="Target error metric (med, mred, wce, er)")
     parser.add_argument("-a", "--method", default="auto", choices=["auto", "inouts", "probprun", "decisiontree"], help="Logic approximation backend algorithm")
     parser.add_argument("-t", "--tech", default="NanGate15nm", help="Standard cell tech library")
+    parser.add_argument("--target", default="asic", choices=["asic", "fpga"], help="Target architecture (asic, fpga)")
+    parser.add_argument("--fpga-family", default="xc7", help="Target FPGA family (default: xc7)")
+    parser.add_argument("--fpga-device", default="xc7a35t", help="Target FPGA device (default: xc7a35t)")
+    parser.add_argument("--allow-dsp", action="store_true", help="Allow DSP slice inference on FPGA")
     parser.add_argument("--clk", dest="clk", default="clk", help="Clock port name")
     parser.add_argument("--period", dest="period", type=float, default=10.0, help="Clock period in ns")
     parser.add_argument("-s", "--samples", type=int, default=300, help="Simulation samples")
@@ -313,6 +341,10 @@ def main() -> None:
         stimulus_file=args.stimulus_file,
         enable_formal=not args.no_formal,
         formal_timeout=args.formal_timeout,
+        target=args.target,
+        fpga_family=args.fpga_family,
+        fpga_device=args.fpga_device,
+        fpga_nodsp=not args.allow_dsp,
     )
     result = sweeper.run_sweep(args.bounds)
     print(json.dumps({"sweep_status": result.get("sweep_status"), "total_points": result.get("total_points")}, indent=2))
