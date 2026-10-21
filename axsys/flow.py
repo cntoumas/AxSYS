@@ -20,9 +20,10 @@ from typing import Any, Dict, Optional
 
 from axsys.axls_bridge import AxlsBridge
 from axsys.cone_extractor import ConeExtractor
-from axsys.reintegrator import Reintegrator
 from axsys.power_estimator import PowerEstimator
+from axsys.reintegrator import Reintegrator
 from axsys.sdc_generator import SdcGenerator
+from axsys.trace_extractor import TraceExtractor
 from axsys.verifier import MiterVerifier
 
 logger = logging.getLogger("axc_flow")
@@ -40,6 +41,13 @@ class AxcFlow:
         clk_period_ns: float = 10.0,
         sim_samples: int = 500,
         verify_cycles: int = 500,
+        decompose_operators: bool = False,
+        use_realistic_traces: bool = True,
+        stimulus_file: Optional[str | Path] = None,
+        enable_formal: bool = True,
+        formal_timeout: int = 60,
+        axc_method: str = "auto",
+        override_bound: Optional[float] = None,
     ):
         self.input_verilog = Path(input_verilog).resolve()
         self.output_dir = Path(output_dir).resolve()
@@ -48,6 +56,13 @@ class AxcFlow:
         self.clk_period_ns = clk_period_ns
         self.sim_samples = sim_samples
         self.verify_cycles = verify_cycles
+        self.decompose_operators = decompose_operators
+        self.use_realistic_traces = use_realistic_traces
+        self.stimulus_file = Path(stimulus_file).resolve() if stimulus_file else None
+        self.enable_formal = enable_formal
+        self.formal_timeout = formal_timeout
+        self.axc_method = axc_method
+        self.override_bound = float(override_bound) if override_bound is not None else None
 
         # Resolve tech Verilog library path
         tech_p = Path(self.tech)
@@ -75,7 +90,7 @@ class AxcFlow:
         top_shell_vlog = self.output_dir / "top_shell.v"
         meta_json_path = self.output_dir / "cone_meta.json"
 
-        extractor = ConeExtractor(verilog_path=self.input_verilog)
+        extractor = ConeExtractor(verilog_path=self.input_verilog, decompose_operators=self.decompose_operators)
         cone_result = extractor.extract_safe_cone(
             submod_tag="axc_cone_0",
             out_submod_path=submod_vlog,
@@ -109,9 +124,39 @@ class AxcFlow:
         # When multiple relaxed signals exist, target the most restrictive (minimum) bound
         bounds_list = [float(s["bound"]) for s in relaxed_signals if "bound" in s]
         primary_bound = min(bounds_list) if bounds_list else 0.05
+        if self.override_bound is not None:
+            primary_bound = self.override_bound
 
         lsb_candidates = [int(s["lsb_width"]) for s in relaxed_signals if s.get("lsb_width") is not None]
         primary_lsb = max(lsb_candidates) if lsb_candidates else None
+
+        # -------------------------------------------------------------
+        # STEP 1.5: Realistic Pipeline Trace Extraction
+        # -------------------------------------------------------------
+        trace_hex_path = None
+        if self.use_realistic_traces:
+            logger.info("--- Step 1.5: Realistic Pipeline Trace Extraction ---")
+            trace_cand = self.output_dir / "cone_trace.hex"
+            try:
+                trace_extractor = TraceExtractor(
+                    top_shell_path=top_shell_vlog,
+                    extracted_cone_path=submod_vlog,
+                    meta_json=meta_json_path,
+                    tech_vlog_path=self.tech_vlog_path,
+                )
+                trace_res = trace_extractor.extract_traces(
+                    out_trace_hex=trace_cand,
+                    num_samples=self.sim_samples,
+                    stimulus_file=self.stimulus_file,
+                    clk_period_ns=self.clk_period_ns,
+                )
+                if trace_res.get("status") == "SUCCESS":
+                    trace_hex_path = trace_cand
+                    logger.info("Captured %d realistic datapath vectors for AxLS training", trace_res.get("num_vectors", 0))
+                else:
+                    logger.warning("Trace extraction was not successful (%s); falling back to synthetic dataset", trace_res.get("status"))
+            except Exception as exc:
+                logger.warning("Trace extraction encountered error (%s); falling back to synthetic dataset", exc)
 
         # -------------------------------------------------------------
         # STEP 2: AxLS Logic Approximation
@@ -125,13 +170,16 @@ class AxcFlow:
             tech=self.tech,
             samples=self.sim_samples,
             work_dir=axls_work_dir,
+            trace_hex_path=trace_hex_path,
         )
 
         approx_result = bridge.optimize(
             metric=primary_metric,
             bound=primary_bound,
             lsb_width=primary_lsb,
+            method=self.axc_method,
             out_approx_path=approx_cone_vlog,
+            trace_hex_path=trace_hex_path,
         )
 
         # -------------------------------------------------------------
@@ -143,6 +191,7 @@ class AxcFlow:
         reintegrator = Reintegrator(
             top_shell_path=top_shell_vlog,
             approx_cone_path=approx_cone_vlog,
+            extracted_cone_path=submod_vlog,
             tech=self.tech,
             tech_verilog_path=self.tech_vlog_path,
         )
@@ -173,6 +222,10 @@ class AxcFlow:
             tech=self.tech,
             tech_vlog=self.tech_vlog_path,
             num_cycles=self.verify_cycles,
+            enable_formal=self.enable_formal,
+            formal_timeout=self.formal_timeout,
+            extracted_cone_vlog=submod_vlog,
+            approx_cone_vlog=approx_cone_vlog,
         )
         verify_result = verifier.verify()
 
@@ -197,15 +250,26 @@ class AxcFlow:
         elapsed = time.time() - start_time
         logger.info("=== FLOW FINISHED IN %.2f SECONDS ===", elapsed)
 
+        formal_verification = verify_result.get("formal_verification", {})
+
         summary: Dict[str, Any] = {
             "flow_status": "SUCCESS" if verify_result.get("status") == "PASSED" else "VERIFICATION_FAILED",
             "elapsed_seconds": round(elapsed, 2),
             "top_module": cone_result.get("top_module", "unknown"),
             "submodule_module": cone_result.get("submodule_module", ""),
             "extracted_safe_cells": cone_result.get("num_safe_cells", 0),
+            "trace_driven": {
+                "enabled": self.use_realistic_traces and trace_hex_path is not None,
+                "trace_file": str(trace_hex_path) if trace_hex_path else None,
+            },
+            "formal_control_status": formal_verification.get("control_equivalence", {}).get("status", "DISABLED"),
+            "formal_wce_status": formal_verification.get("wce_bound", {}).get("status", "DISABLED"),
             "approximation": {
                 "metric": primary_metric,
                 "bound": primary_bound,
+                "method": self.axc_method,
+                "champion_method": approx_result.get("champion_method", self.axc_method),
+                "leaderboard": approx_result.get("leaderboard", []),
                 "relaxed_signals": relaxed_signals,
                 "measured_error": approx_result.get("measured_error"),
                 "pruned_nodes": approx_result.get("pruned_nodes_count"),
@@ -218,6 +282,7 @@ class AxcFlow:
             "generated_files": {
                 "top_shell": str(top_shell_vlog),
                 "extracted_cone": str(submod_vlog),
+                "cone_trace": str(trace_hex_path) if trace_hex_path else None,
                 "approx_cone": str(approx_cone_vlog),
                 "final_approx_top": str(final_top_vlog),
                 "sdc_constraints": str(out_sdc_path),
@@ -242,6 +307,13 @@ def main() -> None:
     parser.add_argument("--period", "--clk-period", dest="period", type=float, default=10.0, help="Clock period in ns")
     parser.add_argument("-s", "--samples", type=int, default=300, help="AxLS simulation samples")
     parser.add_argument("-n", "--verify-cycles", type=int, default=300, help="Miter verification clock cycles")
+    parser.add_argument("--decompose", action="store_true", help="Decompose coarse-grain arithmetic cells into bit-level primitives")
+    parser.add_argument("-a", "--method", default="auto", choices=["auto", "inouts", "probprun", "decisiontree"], help="Logic approximation backend algorithm")
+    parser.add_argument("-b", "--bound", type=float, default=None, help="Override target error bound")
+    parser.add_argument("--no-trace", action="store_true", help="Disable realistic pipeline trace extraction")
+    parser.add_argument("--stimulus-file", default=None, help="Top-level primary input trace stimulus file")
+    parser.add_argument("--no-formal", action="store_true", help="Disable Yosys SAT formal verification")
+    parser.add_argument("--formal-timeout", type=int, default=60, help="Timeout in seconds for SAT solver")
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose logging")
 
     args = parser.parse_args()
@@ -258,6 +330,13 @@ def main() -> None:
         clk_period_ns=args.period,
         sim_samples=args.samples,
         verify_cycles=args.verify_cycles,
+        decompose_operators=args.decompose,
+        use_realistic_traces=not args.no_trace,
+        stimulus_file=args.stimulus_file,
+        enable_formal=not args.no_formal,
+        formal_timeout=args.formal_timeout,
+        axc_method=args.method,
+        override_bound=args.bound,
     )
     result = flow.run()
     print(json.dumps(result, indent=2))

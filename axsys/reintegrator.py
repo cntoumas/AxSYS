@@ -28,11 +28,13 @@ class Reintegrator:
         self,
         top_shell_path: str | Path,
         approx_cone_path: str | Path,
+        extracted_cone_path: Optional[str | Path] = None,
         tech: str = "NanGate15nm",
         tech_verilog_path: Optional[str | Path] = None,
     ):
         self.top_shell_path = Path(top_shell_path).resolve()
         self.approx_cone_path = Path(approx_cone_path).resolve()
+        self.extracted_cone_path = Path(extracted_cone_path).resolve() if extracted_cone_path else None
 
         if tech_verilog_path:
             self.tech_v = Path(tech_verilog_path).resolve()
@@ -55,19 +57,50 @@ class Reintegrator:
 
         design = ys.Design()
 
-        tech_cmd = f"read_verilog {self.tech_v}; " if self.tech_v.exists() else ""
-        flatten_cmd = "flatten; opt_clean; " if flatten else ""
-        cmd = (
-            f"read_verilog {self.top_shell_path} {self.approx_cone_path}; "
-            f"{tech_cmd}"
-            f"hierarchy -check -auto-top; "
-            f"proc; opt_clean; "
-            f"{flatten_cmd}"
-            f"write_verilog {out_p}"
-        )
+        extra_submods_cmd = ""
+        temp_extra_path: Optional[Path] = None
+        if self.extracted_cone_path and self.extracted_cone_path.exists():
+            try:
+                d_approx = ys.Design()
+                ys.run_pass(f"read_verilog -sv {self.approx_cone_path}", d_approx)
+                approx_mods = set(m.str().lstrip("\\") for m in d_approx.modules_.keys())
 
-        logger.info("Executing Yosys re-integration: %s", cmd)
-        ys.run_pass(cmd, design)
+                d_extracted = ys.Design()
+                ys.run_pass(f"read_verilog -sv {self.extracted_cone_path}", d_extracted)
+                extracted_mods = set(m.str().lstrip("\\") for m in d_extracted.modules_.keys())
+
+                missing_mods = extracted_mods - approx_mods
+                if missing_mods:
+                    temp_extra_path = out_p.parent / f".tmp_extra_submods_{out_p.stem}.v"
+                    sel_expr = " ".join(f"\\{m}" for m in sorted(missing_mods))
+                    ys.run_pass(f"select {sel_expr}; write_verilog -selected {temp_extra_path}; select -clear", d_extracted)
+                    if temp_extra_path.exists():
+                        extra_submods_cmd = f"read_verilog -sv {temp_extra_path}; "
+                        logger.info("Preserving unapproximated sister cone(s) in reintegration: %s", sorted(list(missing_mods)))
+            except Exception as exc:
+                logger.warning("Could not extract auxiliary submodules from %s: %s", self.extracted_cone_path, exc)
+
+        try:
+            tech_cmd = f"read_verilog {self.tech_v}; " if self.tech_v.exists() else ""
+            flatten_cmd = "flatten; opt_clean; " if flatten else ""
+            cmd = (
+                f"read_verilog {self.top_shell_path} {self.approx_cone_path}; "
+                f"{extra_submods_cmd}"
+                f"{tech_cmd}"
+                f"hierarchy -check -auto-top; "
+                f"proc; opt_clean; "
+                f"{flatten_cmd}"
+                f"write_verilog {out_p}"
+            )
+
+            logger.info("Executing Yosys re-integration: %s", cmd)
+            ys.run_pass(cmd, design)
+        finally:
+            if temp_extra_path and temp_extra_path.exists():
+                try:
+                    temp_extra_path.unlink()
+                except OSError:
+                    pass
 
         top_mod = design.top_module()
         top_name = top_mod.name.str().lstrip("\\") if top_mod else "unknown"
@@ -84,6 +117,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Axc Design Re-integrator")
     parser.add_argument("--top-shell", required=True, help="Path to top_shell.v")
     parser.add_argument("--approx-cone", required=True, help="Path to approx_cone.v")
+    parser.add_argument("--extracted-cone", default=None, help="Path to extracted_cone.v (optional fallback for multi-cone partitions)")
     parser.add_argument("-t", "--tech", default="NanGate15nm", help="Standard cell tech library name")
     parser.add_argument("--tech-v", default=None, help="Path to standard cell Verilog library")
     parser.add_argument("-o", "--output", required=True, help="Path for final_approx_top.v")
@@ -96,6 +130,7 @@ def main() -> None:
     reintegrator = Reintegrator(
         top_shell_path=args.top_shell,
         approx_cone_path=args.approx_cone,
+        extracted_cone_path=args.extracted_cone,
         tech=args.tech,
         tech_verilog_path=args.tech_v,
     )

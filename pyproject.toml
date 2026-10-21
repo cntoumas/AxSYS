@@ -49,6 +49,8 @@ axsys = "axsys.flow:main"
 axsys-cone = "axsys.cone_extractor:main"
 axsys-sdc = "axsys.sdc_generator:main"
 axsys-verify = "axsys.verifier:main"
+axsys-sweep = "axsys.sweep:main"
+axsys-budget = "axsys.budgeter:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

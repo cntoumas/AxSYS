@@ -9,8 +9,9 @@ from axsys.saif_analyzer import SaifPowerAnalyzer
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TECH_LIB = REPO_ROOT / "third_party" / "AxLS" / "templates" / "NanGate15nm.lib"
 TECH_V = REPO_ROOT / "third_party" / "AxLS" / "templates" / "NanGate15nm.v"
-FIR_EXACT = REPO_ROOT / "axbench_benchmarking" / "fir" / "exact_baseline_mapped.v"
-FIR_APPROX = REPO_ROOT / "axbench_benchmarking" / "fir" / "axsys_run" / "final_approx_top.v"
+FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "saif"
+FIR_EXACT = FIXTURES_DIR / "exact_baseline_mapped.v"
+FIR_APPROX = FIXTURES_DIR / "final_approx_top.v"
 
 
 def test_saif_analyzer_init():

@@ -138,44 +138,71 @@ pip install -e .
 
 ### Command Line Interface (CLI)
 
-AxSYS installs four command-line executables:
+AxSYS installs six plug-and-play command-line executables:
 
 #### 1. Full Pipeline Orchestrator (`axsys`)
 
+Run the complete extraction, logic approximation tournament, reintegration, SDC generation, formal SAT verification, and power estimation on any `.v` file with a single command:
+
 ```bash
 axsys \
-    --input rtl/design.v \
+    --input path/to/any_design.v \
     --output-dir build/design_run \
     --tech NanGate15nm \
-    --clk-period 5.0 \
-    --samples 500 \
-    --verify-cycles 500
+    --method auto \
+    --clk-period 5.0
 ```
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `-i`, `--input` | Path | *Required* | Path to attribute-annotated input Verilog RTL |
-| `-o`, `--output-dir` | Path | `build/axc_output` | Output directory for all generated netlists and reports |
+| `-o`, `--output-dir` | Path | `build/axc_output` | Output directory for all generated netlists |
 | `-t`, `--tech` | String | `NanGate15nm` | Target standard-cell library (`NanGate15nm`, etc.) |
+| `-a`, `--method` | Choice | `auto` | Logic approximation backend (`auto`, `inouts`, `probprun`, `decisiontree`) |
+| `-b`, `--bound` | Float | Attribute-defined | Override target error bound from command line |
 | `--clk`, `--clk-port` | String | `clk` | Clock port name |
 | `--period`, `--clk-period` | Float | `10.0` | Clock period in nanoseconds (for SDC generation) |
-| `-s`, `--samples` | Integer | `300` | Number of simulation vectors for AxLS pruning |
-| `-n`, `--verify-cycles` | Integer | `300` | Number of cycles to run in automated miter verification |
+| `-s`, `--samples` | Integer | `500` | Number of simulation vectors for AxLS pruning |
+| `-n`, `--verify-cycles` | Integer | `500` | Number of cycles to run in automated miter verification |
+| `--no-formal` | Flag | `False` | Disable Yosys SAT formal verification |
+| `--no-trace` | Flag | `False` | Disable realistic datapath trace extraction |
 | `-v`, `--verbose` | Flag | `False` | Enable debug logging |
 
-#### 2. Standalone Cone Extractor (`axsys-cone`)
+#### 2. Pareto Frontier Sweeper (`axsys-sweep`)
+
+Automate error-vs-area Pareto trade-off curves over comma-separated error bounds:
+
+```bash
+axsys-sweep -i path/to/any_design.v -o build/sweep_run -b "0.01, 0.02, 0.05, 0.10"
+```
+
+#### 3. Cascaded Pipeline Error Budgeter (`axsys-budget`)
+
+Automatically distribute and iteratively tighten error budgets across multi-stage pipelined logic cones:
+
+```bash
+axsys-budget -i path/to/pipeline_design.v -o build/budget_run -B 0.05
+```
+
+#### 4. Standalone Cone Extractor (`axsys-cone`)
+
+Extract combinational logic cones and parent top shells with strict taint protection:
 
 ```bash
 axsys-cone -i rtl/design.v --out-submod extracted_cone.v --out-top top_shell.v --out-meta cone_meta.json
 ```
 
-#### 3. Standalone SDC Generator (`axsys-sdc`)
+#### 5. Standalone SDC Generator (`axsys-sdc`)
+
+Generate relaxed timing constraints for approximate paths:
 
 ```bash
 axsys-sdc -m cone_meta.json -o final_approx_top.sdc --period 10.0 --mode max_delay
 ```
 
-#### 4. Standalone Miter Verifier (`axsys-verify`)
+#### 6. Standalone Miter Verifier (`axsys-verify`)
+
+Run combinational WCE and sequential control equivalence verification:
 
 ```bash
 axsys-verify --exact rtl/design.v --approx final_approx_top.v --meta cone_meta.json --tech NanGate15nm -n 500
@@ -260,31 +287,24 @@ pytest -v
 .
 ├── axsys/
 │   ├── __init__.py           # Package exports
-│   ├── flow.py               # Top-level pipeline orchestrator & CLI
-│   ├── cone_extractor.py     # RTLIL cone extraction, DSU aliasing & taint protection
-│   ├── axls_bridge.py        # Subprocess-isolated bridge to AxLS pruning
+│   ├── flow.py               # Top-level pipeline orchestrator & CLI (`axsys`)
+│   ├── cone_extractor.py     # RTLIL cone extraction, DSU aliasing & taint protection (`axsys-cone`)
+│   ├── axls_bridge.py        # Subprocess-isolated tournament pruning engine
+│   ├── sweep.py              # Pareto curve exploration engine (`axsys-sweep`)
+│   ├── budgeter.py           # Multi-stage error budget tightening (`axsys-budget`)
+│   ├── trace_extractor.py    # Pipeline-realistic active stimulus vector dumper
 │   ├── reintegrator.py       # Hierarchical netlist re-stitching
-│   ├── sdc_generator.py      # SDC timing constraint generator
-│   ├── verifier.py           # Dual-miter automated testbench harness
-│   └── power_estimator.py    # Liberty (.lib) static leakage & dynamic power model
-├── examples/
-│   ├── mac/                  # Single MAC processing element
-│   ├── sobel/                # Multi-cone Sobel operator
-│   ├── systolic_pe/          # INT8 Systolic PE power/area sweep
-│   └── systolic_accelerator/ # 4x4 and 8x8 2D systolic tensor arrays (ASIC + FPGA)
-├── reports/                  # Evaluation dashboards, visual plots, and status audits
-├── tests/
-│   ├── conftest.py
-│   ├── test_cone_extractor.py
-│   ├── test_sdc_generator.py
-│   ├── test_power_estimator.py
-│   ├── test_reintegrator.py
-│   ├── test_verifier.py
-│   └── test_flow.py
+│   ├── sdc_generator.py      # SDC timing constraint generator (`axsys-sdc`)
+│   ├── verifier.py           # Formal SAT solver & dual-miter verifier (`axsys-verify`)
+│   ├── power_estimator.py    # Liberty (.lib) static leakage & dynamic power model
+│   └── saif_analyzer.py      # Vector-driven IEEE SAIF switching activity analyzer
+├── axbench_benchmarking/     # Standard AxBench hardware benchmark suite (fir, sobel, idct, ...)
+├── examples/                 # Target designs (mac, sobel, systolic_pe, rgb2ycbcr, ...)
+├── tests/                    # 40 comprehensive unit & formal verification tests
 ├── third_party/
-│   └── AxLS/                 # Approximate Logic Synthesis engine
+│   └── AxLS/                 # Approximate Logic Synthesis engine & NanGate15nm tech library
 ├── pyproject.toml            # PEP 621 package and build specification
-├── requirements.txt
+├── requirements.txt          # Python dependencies
 ├── LICENSE                   # MIT License
 └── README.md
 ```
