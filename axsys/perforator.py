@@ -38,10 +38,11 @@ class SpatialSumTree:
 class SequentialCounterLoop:
     """Represents an extracted sequential iteration counter loop."""
     counter_name: str
-    bound_value: int
+    bound_value: Any
     comparator_op: str
     bit_width: int
     raw_condition: str
+    is_numeric: bool = True
 
 
 class RtlLoopPerforator:
@@ -173,69 +174,171 @@ class RtlLoopPerforator:
     # -------------------------------------------------------------------------
     # 2. Sequential Loop Counter Discovery & Early Termination
     # -------------------------------------------------------------------------
+    def _find_if_conditions(self) -> List[Tuple[int, int, str, str]]:
+        """Find all if (...) conditions in RTL with balanced parentheses.
+
+        Returns list of (start_idx, end_idx, cond_text, full_if_stmt).
+        """
+        results = []
+        for m in re.finditer(r"\bif\s*\(", self.raw_content):
+            start = m.end() - 1  # index of '('
+            depth = 0
+            end = start
+            for i in range(start, len(self.raw_content)):
+                if self.raw_content[i] == "(":
+                    depth += 1
+                elif self.raw_content[i] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        end = i
+                        break
+            if depth == 0:
+                cond = self.raw_content[start + 1 : end].strip()
+                results.append((m.start(), end + 1, cond, self.raw_content[m.start() : end + 1]))
+        return results
+
     def detect_sequential_counters(self) -> List[SequentialCounterLoop]:
-        """Discover multi-cycle iterative FSM counters and termination conditions."""
+        """Discover multi-cycle iterative FSM counters and termination conditions.
+
+        Supports both literal numeric bounds (e.g. `count == 12`) and
+        parameterized symbolic bounds (e.g. `stage_idx == LOG2_N - 1`, `bfy_count == (N/2) - 1`).
+        """
         counters: List[SequentialCounterLoop] = []
 
-        # Find registers incremented: count <= count + 1'b1; or count <= count + 1;
-        inc_matches = re.finditer(
-            r"([A-Za-z_][A-Za-z0-9_]*)\s*<=\s*\1\s*\+\s*([0-9]+'[bBdDhHoO][0-9a-fA-F_]+|[0-9]+);",
+        # Find registers incremented or decremented:
+        # count <= count + 1'b1; or count <= count + 1; or count <= count - 1;
+        step_matches = re.finditer(
+            r"([A-Za-z_][A-Za-z0-9_]*)\s*<=\s*\1\s*(\+|\-)\s*([0-9]+'[bBdDhHoO][0-9a-fA-F_]+|[0-9]+);",
             self.raw_content,
         )
-        counter_names = set(m.group(1) for m in inc_matches)
+        counter_names = set(m.group(1) for m in step_matches)
+        if not counter_names:
+            return counters
 
-        for c_name in counter_names:
-            # Find comparison conditions: count == 16, count >= 16, count == 4'd15, etc.
-            cond_pat = rf"\b{c_name}\s*(==|>=|>)\s*([0-9]+'d[0-9]+|[0-9]+)\b"
-            for m in re.finditer(cond_pat, self.raw_content):
-                op = m.group(1)
-                bound_str = m.group(2)
-                if "'d" in bound_str:
-                    val = int(bound_str.split("'d")[1])
-                elif "'h" in bound_str:
-                    val = int(bound_str.split("'h")[1], 16)
-                else:
-                    val = int(bound_str)
+        if_blocks = self._find_if_conditions()
+        seen = set()
 
-                counters.append(
-                    SequentialCounterLoop(
-                        counter_name=c_name,
-                        bound_value=val,
-                        comparator_op=op,
-                        bit_width=32,
-                        raw_condition=m.group(0),
+        for _, _, cond_text, _ in if_blocks:
+            for c_name in counter_names:
+                # Match comparisons: c_name == expr, c_name >= expr, etc.
+                cmp_pat = rf"\b{c_name}\s*(==|!=|>=|>|<=|<)\s*([A-Za-z0-9_\'\+\-\*/\(\)\s]+)"
+                for m_cmp in re.finditer(cmp_pat, cond_text):
+                    op = m_cmp.group(1)
+                    raw_bound = m_cmp.group(2).strip()
+                    # Clean up bound: strip trailing logic connectors
+                    raw_bound = re.split(r"\s*(?:&&|\|\|)\s*", raw_bound)[0].strip()
+                    raw_cond = f"{c_name} {op} {raw_bound}"
+
+                    if (c_name, raw_cond) in seen:
+                        continue
+                    seen.add((c_name, raw_cond))
+
+                    # Parse bound as numeric if possible
+                    is_num = False
+                    val: Any = raw_bound
+                    if re.fullmatch(r"[0-9]+", raw_bound):
+                        val = int(raw_bound)
+                        is_num = True
+                    elif "'d" in raw_bound:
+                        try:
+                            val = int(raw_bound.split("'d")[1])
+                            is_num = True
+                        except ValueError:
+                            pass
+                    elif "'h" in raw_bound:
+                        try:
+                            val = int(raw_bound.split("'h")[1], 16)
+                            is_num = True
+                        except ValueError:
+                            pass
+
+                    counters.append(
+                        SequentialCounterLoop(
+                            counter_name=c_name,
+                            bound_value=val,
+                            comparator_op=op,
+                            bit_width=32,
+                            raw_condition=raw_cond,
+                            is_numeric=is_num,
+                        )
                     )
-                )
 
         return counters
 
     def perforate_sequential_counter(
         self,
         loop: SequentialCounterLoop,
-        cycle_reduction: int,
+        cycle_reduction: int = 1,
+        new_bound_expr: Optional[str] = None,
         out_path: Optional[Path] = None,
     ) -> Path:
-        """Perforate sequential iteration counter by reducing loop bound."""
-        if cycle_reduction >= loop.bound_value:
-            raise ValueError(f"Cycle reduction {cycle_reduction} must be less than bound {loop.bound_value}")
+        """Perforate sequential iteration counter by reducing loop bound.
 
-        new_bound = loop.bound_value - cycle_reduction
+        Supports both numeric integer bounds and parameterized symbolic expressions.
+        """
+        orig_cond = loop.raw_condition
+
+        if new_bound_expr is not None:
+            new_cond = f"{loop.counter_name} {loop.comparator_op} {new_bound_expr}"
+            bound_desc = str(new_bound_expr)
+        elif loop.is_numeric:
+            if cycle_reduction >= loop.bound_value:
+                raise ValueError(f"Cycle reduction {cycle_reduction} must be less than bound {loop.bound_value}")
+            new_bound = loop.bound_value - cycle_reduction
+            bound_desc = str(new_bound)
+            # Preserve Verilog radix formatting if present
+            if "'d" in orig_cond:
+                parts = orig_cond.split("'d")
+                width_prefix = parts[0].split()[-1] + "'d"
+                new_cond = re.sub(rf"{width_prefix}\d+", f"{width_prefix}{new_bound}", orig_cond)
+            else:
+                new_cond = re.sub(rf"\b{loop.bound_value}\b", str(new_bound), orig_cond)
+        else:
+            # Parameterized symbolic bound (e.g. LOG2_N - 1, (N/2) - 1)
+            raw_bound = str(loop.bound_value)
+            m_sub = re.match(r"^(.*?)\s*-\s*(\d+)$", raw_bound)
+            m_add = re.match(r"^(.*?)\s*\+\s*(\d+)$", raw_bound)
+            if m_sub:
+                base = m_sub.group(1).strip()
+                curr_off = int(m_sub.group(2))
+                new_bound_val = f"{base} - {curr_off + cycle_reduction}"
+            elif m_add:
+                base = m_add.group(1).strip()
+                curr_off = int(m_add.group(2))
+                rem = curr_off - cycle_reduction
+                new_bound_val = f"{base} + {rem}" if rem > 0 else (base if rem == 0 else f"{base} - {abs(rem)}")
+            else:
+                new_bound_val = f"{raw_bound} - {cycle_reduction}"
+
+            bound_desc = new_bound_val
+            new_cond = f"{loop.counter_name} {loop.comparator_op} {new_bound_val}"
+
         out_path = out_path or (self.work_dir / f"perforated_seq_{loop.counter_name}_minus{cycle_reduction}.v")
 
-        # Replace bound in raw condition
-        orig_cond = loop.raw_condition
-        # Preserve Verilog radix formatting if present
-        if "'d" in orig_cond:
-            parts = orig_cond.split("'d")
-            width_prefix = parts[0].split()[-1] + "'d"
-            new_cond = re.sub(rf"{width_prefix}\d+", f"{width_prefix}{new_bound}", orig_cond)
-        else:
-            new_cond = re.sub(rf"\b{loop.bound_value}\b", str(new_bound), orig_cond)
+        mutated_code = self.raw_content.replace(
+            orig_cond,
+            f"{new_cond} /* [Perforated: early exit -{cycle_reduction} cycles] */",
+        )
+        if mutated_code == self.raw_content:
+            # Fallback to regex with flexible whitespace
+            orig_re = (
+                re.escape(loop.counter_name)
+                + r"\s*"
+                + re.escape(loop.comparator_op)
+                + r"\s*"
+                + re.escape(str(loop.bound_value))
+            )
+            mutated_code = re.sub(
+                orig_re,
+                f"{new_cond} /* [Perforated: early exit -{cycle_reduction} cycles] */",
+                self.raw_content,
+            )
 
-        mutated_code = self.raw_content.replace(orig_cond, f"{new_cond} /* [Perforated: early exit -{cycle_reduction} cycles] */")
         out_path.write_text(mutated_code, encoding="utf-8")
-        logger.info("Generated sequential perforated RTL: bound %d -> %d (-%d cycles) -> %s",
-                    loop.bound_value, new_bound, cycle_reduction, out_path.name)
+        logger.info(
+            "Generated sequential perforated RTL: condition '%s' -> '%s' (bound=%s) -> %s",
+            orig_cond, new_cond, bound_desc, out_path.name
+        )
         return out_path
 
     # -------------------------------------------------------------------------
@@ -313,17 +416,29 @@ class RtlLoopPerforator:
         # 2. Sequential Counters
         counters = self.detect_sequential_counters()
         for counter in counters:
-            if counter.bound_value >= 4:
-                for dec in [1, 2, counter.bound_value // 4]:
-                    if 0 < dec < counter.bound_value:
-                        p_seq = self.perforate_sequential_counter(counter, cycle_reduction=dec)
-                        candidates.append({
-                            "name": f"SeqPerforate_{counter.counter_name}_minus{dec}",
-                            "path": p_seq,
-                            "type": "sequential",
-                            "cycle_reduction": dec,
-                            "counter": counter.counter_name,
-                        })
+            if counter.is_numeric:
+                if counter.bound_value >= 4:
+                    for dec in [1, 2, counter.bound_value // 4]:
+                        if 0 < dec < counter.bound_value:
+                            p_seq = self.perforate_sequential_counter(counter, cycle_reduction=dec)
+                            candidates.append({
+                                "name": f"SeqPerforate_{counter.counter_name}_minus{dec}",
+                                "path": p_seq,
+                                "type": "sequential",
+                                "cycle_reduction": dec,
+                                "counter": counter.counter_name,
+                            })
+            else:
+                # Parameterized symbolic bound
+                for dec in [1, 2]:
+                    p_seq = self.perforate_sequential_counter(counter, cycle_reduction=dec)
+                    candidates.append({
+                        "name": f"SeqPerforate_{counter.counter_name}_minus{dec}",
+                        "path": p_seq,
+                        "type": "sequential",
+                        "cycle_reduction": dec,
+                        "counter": counter.counter_name,
+                    })
 
         # 3. Temporal Decimation
         if "valid_in" in self.raw_content:

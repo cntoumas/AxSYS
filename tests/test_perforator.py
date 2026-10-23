@@ -75,6 +75,67 @@ def test_sequential_counter_perforation(tmp_path: Path):
     assert "4'd10" in mut_text
 
 
+def test_parameterized_sequential_counter_perforation(tmp_path: Path):
+    """Test early termination on parameterized sequential loop counter."""
+    param_seq_code = """
+    module agu_loop #(
+        parameter N = 1024,
+        parameter LOG2_N = 10
+    )(
+        input wire clk,
+        input wire rst,
+        output reg done
+    );
+        reg [LOG2_N-2:0] bfy_count;
+        reg [3:0] stage_idx;
+
+        always @(posedge clk) begin
+            if (rst) begin
+                bfy_count <= 0;
+                stage_idx <= 0;
+                done <= 0;
+            end else begin
+                if (bfy_count == (N/2) - 1) begin
+                    bfy_count <= 0;
+                    stage_idx <= stage_idx + 1;
+                    if (stage_idx == LOG2_N - 1) begin
+                        done <= 1;
+                    end
+                end else begin
+                    bfy_count <= bfy_count + 1;
+                end
+            end
+        end
+    endmodule
+    """
+    v_file = tmp_path / "agu_loop.v"
+    v_file.write_text(param_seq_code, encoding="utf-8")
+
+    perforator = RtlLoopPerforator(verilog_path=v_file, work_dir=tmp_path)
+    counters = perforator.detect_sequential_counters()
+    assert len(counters) >= 2
+
+    stage_loop = next((c for c in counters if c.counter_name == "stage_idx"), None)
+    assert stage_loop is not None
+    assert not stage_loop.is_numeric
+    assert stage_loop.bound_value == "LOG2_N - 1"
+
+    bfy_loop = next((c for c in counters if c.counter_name == "bfy_count"), None)
+    assert bfy_loop is not None
+    assert not bfy_loop.is_numeric
+    assert bfy_loop.bound_value == "(N/2) - 1"
+
+    # Perforate stage loop by 2 stages (e.g. 8-stage FFT)
+    p_stage2 = perforator.perforate_sequential_counter(stage_loop, cycle_reduction=2)
+    assert p_stage2.exists()
+    assert "stage_idx == LOG2_N - 3" in p_stage2.read_text(encoding="utf-8")
+
+    # Perforate butterfly loop by 1
+    p_bfy = perforator.perforate_sequential_counter(bfy_loop, cycle_reduction=1)
+    assert p_bfy.exists()
+    assert "bfy_count == (N/2) - 2" in p_bfy.read_text(encoding="utf-8")
+
+
 def test_temporal_stride_decimation(tmp_path: Path):
     """Test temporal decimation wrapper on streaming interface."""
     perforator = RtlLoopPerforator(verilog_path=FIR_PATH, work_dir=tmp_path)
