@@ -8,6 +8,7 @@ from axsys.sdc_generator import SdcGenerator
 from axsys.verifier import MiterVerifier
 from axsys.saif_analyzer import SaifPowerAnalyzer
 from axsys.fpga_estimator import FpgaEstimator
+from axsys.fpga_backend import FpgaBackend
 
 __version__ = "0.1.0"
 __all__ = [
@@ -19,4 +20,5 @@ __all__ = [
     "MiterVerifier",
     "SaifPowerAnalyzer",
     "FpgaEstimator",
+    "FpgaBackend",
 ]

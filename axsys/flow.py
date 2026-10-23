@@ -173,32 +173,55 @@ class AxcFlow:
                 logger.warning("Trace extraction encountered error (%s); falling back to synthetic dataset", exc)
 
         # -------------------------------------------------------------
-        # STEP 2: AxLS Logic Approximation
+        # STEP 2: Logic Approximation (Native FPGA or ASIC AxLS)
         # -------------------------------------------------------------
-        logger.info("--- Step 2: AxLS Gate-Level Approximation ---")
         approx_cone_vlog = self.output_dir / "approx_cone.v"
-        axls_work_dir = self.output_dir / "axls_workspace"
+        
+        if self.target == "fpga":
+            logger.info("--- Step 2: Native FPGA Approximate Logic Synthesis ---")
+            fpga_work_dir = self.output_dir / "fpga_workspace"
+            from axsys.fpga_backend import FpgaBackend
 
-        bridge = AxlsBridge(
-            cone_verilog_path=submod_vlog,
-            tech=self.tech,
-            samples=self.sim_samples,
-            work_dir=axls_work_dir,
-            trace_hex_path=trace_hex_path,
-            target=self.target,
-            fpga_family=self.fpga_family,
-            fpga_device=self.fpga_device,
-            fpga_nodsp=self.fpga_nodsp,
-        )
+            backend = FpgaBackend(
+                cone_verilog_path=submod_vlog,
+                meta_json_path=meta_json_path,
+                target_family=self.fpga_family,
+                target_device=self.fpga_device,
+                nodsp=self.fpga_nodsp,
+                work_dir=fpga_work_dir,
+                trace_hex_path=trace_hex_path,
+                sim_samples=self.sim_samples,
+            )
+            approx_result = backend.optimize(
+                metric=primary_metric,
+                bound=primary_bound,
+                lsb_width=primary_lsb,
+                method=self.axc_method,
+                out_approx_path=approx_cone_vlog,
+            )
+        else:
+            logger.info("--- Step 2: AxLS Gate-Level Approximation (ASIC) ---")
+            axls_work_dir = self.output_dir / "axls_workspace"
+            bridge = AxlsBridge(
+                cone_verilog_path=submod_vlog,
+                tech=self.tech,
+                samples=self.sim_samples,
+                work_dir=axls_work_dir,
+                trace_hex_path=trace_hex_path,
+                target=self.target,
+                fpga_family=self.fpga_family,
+                fpga_device=self.fpga_device,
+                fpga_nodsp=self.fpga_nodsp,
+            )
 
-        approx_result = bridge.optimize(
-            metric=primary_metric,
-            bound=primary_bound,
-            lsb_width=primary_lsb,
-            method=self.axc_method,
-            out_approx_path=approx_cone_vlog,
-            trace_hex_path=trace_hex_path,
-        )
+            approx_result = bridge.optimize(
+                metric=primary_metric,
+                bound=primary_bound,
+                lsb_width=primary_lsb,
+                method=self.axc_method,
+                out_approx_path=approx_cone_vlog,
+                trace_hex_path=trace_hex_path,
+            )
 
         # -------------------------------------------------------------
         # STEP 3: Re-Integration
@@ -206,12 +229,13 @@ class AxcFlow:
         logger.info("--- Step 3: Top Shell and Approximate Cone Re-integration ---")
         final_top_vlog = self.output_dir / "final_approx_top.v"
 
+        tech_vlog_to_pass = None if self.target == "fpga" else self.tech_vlog_path
         reintegrator = Reintegrator(
             top_shell_path=top_shell_vlog,
             approx_cone_path=approx_cone_vlog,
             extracted_cone_path=submod_vlog,
             tech=self.tech,
-            tech_verilog_path=self.tech_vlog_path,
+            tech_verilog_path=tech_vlog_to_pass,
         )
         reint_result = reintegrator.reintegrate(out_final_path=final_top_vlog)
 
@@ -238,7 +262,7 @@ class AxcFlow:
             approx_vlog=final_top_vlog,
             meta_json=meta_json_path,
             tech=self.tech,
-            tech_vlog=self.tech_vlog_path,
+            tech_vlog=None if self.target == "fpga" else self.tech_vlog_path,
             num_cycles=self.verify_cycles,
             enable_formal=self.enable_formal,
             formal_timeout=self.formal_timeout,
@@ -361,7 +385,7 @@ def main() -> None:
     parser.add_argument("-s", "--samples", type=int, default=300, help="AxLS simulation samples")
     parser.add_argument("-n", "--verify-cycles", type=int, default=300, help="Miter verification clock cycles")
     parser.add_argument("--decompose", action="store_true", help="Decompose coarse-grain arithmetic cells into bit-level primitives")
-    parser.add_argument("-a", "--method", default="auto", choices=["auto", "inouts", "probprun", "decisiontree"], help="Logic approximation backend algorithm")
+    parser.add_argument("-a", "--method", default="auto", choices=["auto", "inouts", "probprun", "decisiontree", "dt", "decision_tree", "carry_prune", "lut_prune"], help="Logic approximation backend algorithm")
     parser.add_argument("-b", "--bound", type=float, default=None, help="Override target error bound")
     parser.add_argument("--no-trace", action="store_true", help="Disable realistic pipeline trace extraction")
     parser.add_argument("--stimulus-file", default=None, help="Top-level primary input trace stimulus file")

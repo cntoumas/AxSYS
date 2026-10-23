@@ -83,8 +83,20 @@ class FpgaEstimator:
         dsp_flag = "-nodsp" if self.nodsp else ""
         out_vlog_cmd = f"write_verilog {out_mapped_vlog};" if out_mapped_vlog else ""
 
+        # If netlist references gate primitives (e.g. from NanGate15nm) without embedding definitions, read them first
+        extra_reads = ""
+        try:
+            content = netlist.read_text(encoding="utf-8", errors="ignore")
+            if ("module AND2_X1" not in content) and ("_X" in content or "MUX2" in content or "FA_X1" in content):
+                nan_path = Path(__file__).resolve().parent.parent / "third_party" / "AxLS" / "templates" / "NanGate15nm.v"
+                if nan_path.exists():
+                    extra_reads = f"read_verilog -sv {nan_path}; "
+        except Exception:
+            pass
+
         yosys_script = (
-            f"read_verilog {netlist}; "
+            f"{extra_reads}"
+            f"read_verilog -sv {netlist}; "
             f"synth_xilinx -family {self.family} -flatten -noiopad {dsp_flag} -top {top_module}; "
             f"{out_vlog_cmd} "
             f"stat -json"

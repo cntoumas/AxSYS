@@ -10,4 +10,7 @@ work/
 *.vcd
 axls_workspace/
 saif_run/
+docs/
+reports/
+scripts/
 
