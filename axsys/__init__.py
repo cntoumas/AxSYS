@@ -9,6 +9,7 @@ from axsys.verifier import MiterVerifier
 from axsys.saif_analyzer import SaifPowerAnalyzer
 from axsys.fpga_estimator import FpgaEstimator
 from axsys.fpga_backend import FpgaBackend
+from axsys.perforator import RtlLoopPerforator
 
 __version__ = "0.1.0"
 __all__ = [
@@ -21,4 +22,5 @@ __all__ = [
     "SaifPowerAnalyzer",
     "FpgaEstimator",
     "FpgaBackend",
+    "RtlLoopPerforator",
 ]

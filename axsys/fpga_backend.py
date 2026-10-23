@@ -69,33 +69,27 @@ class FpgaBackend:
         inputs: Dict[str, Dict[str, Any]] = {}
         outputs: Dict[str, Dict[str, Any]] = {}
 
-        # Parse port declarations inside module body
+        # Parse port declarations (supports both ANSI header and non-ANSI body declarations)
+        port_pat = re.compile(r"\b(input|output)\s+(wire\s+|reg\s+)?(signed\s+)?(\[[^\]]+\]\s+)?(\w+)")
         for line in content.splitlines():
             line = line.strip()
-            # input [7:0] a; or input a;
-            inp_m = re.match(r"^input\s+(signed\s+)?(\[[^\]]+\]\s+)?(\w+)\s*;", line)
-            if inp_m:
-                signed = bool(inp_m.group(1))
-                width_str = inp_m.group(2)
-                name = inp_m.group(3)
+            m = port_pat.search(line)
+            if m:
+                direction = m.group(1)
+                is_signed = bool(m.group(3))
+                width_str = m.group(4)
+                name = m.group(5)
                 width = 1
                 if width_str:
                     w_m = re.match(r"\[(\d+):(\d+)\]", width_str.strip())
                     if w_m:
                         width = abs(int(w_m.group(1)) - int(w_m.group(2))) + 1
-                inputs[name] = {"name": name, "width": width, "signed": signed}
 
-            out_m = re.match(r"^output\s+(reg\s+)?(signed\s+)?(\[[^\]]+\]\s+)?(\w+)\s*;", line)
-            if out_m:
-                signed = bool(out_m.group(2))
-                width_str = out_m.group(3)
-                name = out_m.group(4)
-                width = 1
-                if width_str:
-                    w_m = re.match(r"\[(\d+):(\d+)\]", width_str.strip())
-                    if w_m:
-                        width = abs(int(w_m.group(1)) - int(w_m.group(2))) + 1
-                outputs[name] = {"name": name, "width": width, "signed": signed}
+                info = {"name": name, "width": width, "signed": is_signed}
+                if direction == "input":
+                    inputs[name] = info
+                else:
+                    outputs[name] = info
 
         # If meta JSON is available, refine relaxed vs precise tags
         relaxed_out = None
@@ -312,6 +306,7 @@ endmodule
 
     def _generate_carry_pruned_candidates(self, iface: Dict[str, Any], run_dir: Path) -> List[Dict[str, Any]]:
         """Strategy 1: Generate carry-aware arithmetic bit truncation & rounding candidates."""
+        run_dir.mkdir(parents=True, exist_ok=True)
         candidates: List[Dict[str, Any]] = []
         raw_code = iface["raw_content"]
         rel_out = iface["relaxed_output"]
@@ -358,6 +353,210 @@ endmodule
                     "k": k,
                     "rounding": "nearest",
                 })
+
+        return candidates
+
+    def _split_addition_terms(self, expr: str) -> List[str]:
+        """Split expression into top-level additive terms."""
+        terms = []
+        depth = 0
+        current = []
+        for char in expr:
+            if char in "([{":
+                depth += 1
+                current.append(char)
+            elif char in ")]}":
+                depth -= 1
+                current.append(char)
+            elif char == "+" and depth == 0:
+                t = "".join(current).strip()
+                if t:
+                    terms.append(t)
+                current = []
+            else:
+                current.append(char)
+        t = "".join(current).strip()
+        if t:
+            terms.append(t)
+        return terms
+
+    def _generate_loa_candidates(self, iface: Dict[str, Any], run_dir: Path) -> List[Dict[str, Any]]:
+        """Strategy: Lower-Part OR Adder (LOA) with speculative carry."""
+        run_dir.mkdir(parents=True, exist_ok=True)
+        candidates: List[Dict[str, Any]] = []
+        raw_code = iface["raw_content"]
+        rel_out = iface["relaxed_output"]
+        rel_width = iface["outputs"][rel_out]["width"]
+        rel_signed = iface["outputs"][rel_out]["signed"]
+
+        assign_m = re.search(rf"\bassign\s+{rel_out}\s*=\s*(.*?);", raw_code)
+        if not assign_m:
+            return candidates
+
+        rhs = assign_m.group(1).strip()
+        terms = self._split_addition_terms(rhs)
+
+        if len(terms) < 2:
+            multi_inps = [k for k, v in iface["inputs"].items() if v["width"] > 1]
+            if len(multi_inps) >= 2:
+                opA, opB = multi_inps[0], multi_inps[1]
+            else:
+                return candidates
+        elif len(terms) == 2:
+            opA, opB = terms[0].strip(), terms[1].strip()
+        else:
+            opA = " + ".join(terms[:-1])
+            opB = terms[-1].strip()
+
+        max_k = min(rel_width - 1, 16)
+        for k in range(1, max_k + 1):
+            signed_kw = "$signed" if rel_signed else ""
+            loa_vlog = (
+                f"wire [{rel_width-1}:0] _loa_opA = ({opA});\n"
+                f"  wire [{rel_width-1}:0] _loa_opB = ({opB});\n"
+                f"  wire [{k-1}:0] _loa_lower = _loa_opA[{k-1}:0] | _loa_opB[{k-1}:0];\n"
+                f"  wire _loa_carry = _loa_opA[{k-1}] & _loa_opB[{k-1}];\n"
+                f"  wire [{rel_width-k-1}:0] _loa_upper = {signed_kw}(_loa_opA[{rel_width-1}:{k}]) + {signed_kw}(_loa_opB[{rel_width-1}:{k}]) + _loa_carry;\n"
+                f"  assign {rel_out} = {{_loa_upper, _loa_lower}};"
+            )
+
+            cand_code = re.sub(rf"\bassign\s+{rel_out}\s*=\s*.*?;", loa_vlog, raw_code, count=1)
+            cand_p = run_dir / f"cand_loa_k{k}.v"
+            cand_p.write_text(cand_code, encoding="utf-8")
+            candidates.append({
+                "name": f"LOA_k{k}",
+                "path": cand_p,
+                "strategy": "loa",
+                "k": k,
+            })
+
+        return candidates
+
+    def _generate_bam_candidates(self, iface: Dict[str, Any], run_dir: Path) -> List[Dict[str, Any]]:
+        """Strategy: Broken Array Multiplier (BAM) & Partial Product Truncation."""
+        run_dir.mkdir(parents=True, exist_ok=True)
+        candidates: List[Dict[str, Any]] = []
+        raw_code = iface["raw_content"]
+        rel_out = iface["relaxed_output"]
+
+        mul_m = re.search(
+            r"(\([^\)]+\)|[A-Za-z_][A-Za-z0-9_]*)\s*\*\s*(\([^\)]+\)|[A-Za-z_][A-Za-z0-9_]*|[0-9]+'s?d[0-9]+)",
+            raw_code,
+        )
+        if not mul_m:
+            return candidates
+
+        opA_raw = mul_m.group(1).strip()
+        opB_raw = mul_m.group(2).strip()
+        opA_clean = opA_raw.strip("()")
+        opB_clean = opB_raw.strip("()")
+
+        wA = 8
+        wB = 8
+        if opA_clean in iface["inputs"]:
+            wA = iface["inputs"][opA_clean]["width"]
+        if opB_clean in iface["inputs"]:
+            wB = iface["inputs"][opB_clean]["width"]
+        elif "'d" in opB_clean:
+            try:
+                wB = int(opB_clean.split("'")[0])
+            except Exception:
+                wB = 8
+
+        wP = wA + wB
+        is_signed = "$signed" in raw_code or "signed" in raw_code or iface["outputs"][rel_out]["signed"]
+
+        max_k = min(wA + wB - 2, 12)
+        k_steps = [k for k in [2, 3, 4, 5, 6, 8, 10] if k <= max_k]
+
+        for k in k_steps:
+            func_name = f"_axc_bam_mul_k{k}"
+            bias = 1 << (k - 1) if k > 0 else 0
+
+            if is_signed:
+                c_const = f"-{wP}'sd{1 << (wP - 1)} + {wP}'sd{1 << (wA - 1)} + {wP}'sd{1 << (wB - 1)} + {bias}"
+                func_code = f"""
+    function signed [{wP-1}:0] {func_name};
+        input [{wA-1}:0] a_in;
+        input [{wB-1}:0] b_in;
+        integer i, j;
+        reg signed [{wP-1}:0] acc;
+        begin
+            acc = {c_const};
+            for (i = 0; i < {wA-1}; i = i + 1) begin
+                for (j = 0; j < {wB-1}; j = j + 1) begin
+                    if (i + j >= {k}) begin
+                        acc = acc + ((a_in[i] & b_in[j]) << (i + j));
+                    end
+                end
+            end
+            acc = acc + ((a_in[{wA-1}] & b_in[{wB-1}]) << {wA + wB - 2});
+            for (j = 0; j < {wB-1}; j = j + 1)
+                acc = acc + ((1'b1 ^ (a_in[{wA-1}] & b_in[j])) << ({wA-1} + j));
+            for (i = 0; i < {wA-1}; i = i + 1)
+                acc = acc + ((1'b1 ^ (a_in[i] & b_in[{wB-1}])) << ({wB-1} + i));
+            {func_name} = acc;
+        end
+    endfunction
+"""
+            else:
+                func_code = f"""
+    function [{wP-1}:0] {func_name};
+        input [{wA-1}:0] a_in;
+        input [{wB-1}:0] b_in;
+        integer i, j;
+        reg [{wP-1}:0] acc;
+        begin
+            acc = {bias};
+            for (i = 0; i < {wA}; i = i + 1) begin
+                for (j = 0; j < {wB}; j = j + 1) begin
+                    if (i + j >= {k}) begin
+                        acc = acc + ((a_in[i] & b_in[j]) << (i + j));
+                    end
+                end
+            end
+            {func_name} = acc;
+        end
+    endfunction
+"""
+            cand_code = re.sub(r"\bassign\b", f"{func_code}\n  assign", raw_code, count=1)
+            cand_code = cand_code.replace(mul_m.group(0), f"{func_name}({opA_clean}, {opB_clean})")
+
+            cand_p = run_dir / f"cand_bam_k{k}.v"
+            cand_p.write_text(cand_code, encoding="utf-8")
+            candidates.append({
+                "name": f"BAM_k{k}",
+                "path": cand_p,
+                "strategy": "bam",
+                "k": k,
+            })
+
+        return candidates
+
+    def _generate_spatial_perforated_candidates(self, iface: Dict[str, Any], run_dir: Path) -> List[Dict[str, Any]]:
+        """Strategy: Spatial Tap Perforation for multi-operand adder trees."""
+        run_dir.mkdir(parents=True, exist_ok=True)
+        candidates: List[Dict[str, Any]] = []
+        try:
+            from axsys.perforator import RtlLoopPerforator
+            perforator = RtlLoopPerforator(verilog_path=self.cone_vlog, work_dir=run_dir)
+            trees = perforator.detect_spatial_sum_trees()
+            for tree in trees:
+                max_drops = min(len(tree.terms) - 2, 4)
+                for k_drop in range(1, max_drops + 1):
+                    p_mut = perforator.perforate_spatial_tree(
+                        tree,
+                        num_taps_to_drop=k_drop,
+                        out_path=run_dir / f"cand_spatial_{tree.target_signal}_drop{k_drop}.v",
+                    )
+                    candidates.append({
+                        "name": f"SpatialDrop_{tree.target_signal}_k{k_drop}",
+                        "path": p_mut,
+                        "strategy": "spatial_perforate",
+                        "dropped_taps": k_drop,
+                    })
+        except Exception as exc:
+            logger.debug("Spatial tap perforation candidate generation failed: %s", exc)
 
         return candidates
 
@@ -625,6 +824,21 @@ endmodule
             logger.info("Generating Carry-Aware Arithmetic Pruning candidates...")
             carry_cands = self._generate_carry_pruned_candidates(iface, run_dir)
             all_candidates.extend(carry_cands)
+
+        if method.lower() in ("auto", "loa"):
+            logger.info("Generating Lower-Part OR Adder (LOA) candidates...")
+            loa_cands = self._generate_loa_candidates(iface, run_dir)
+            all_candidates.extend(loa_cands)
+
+        if method.lower() in ("auto", "bam", "ppt"):
+            logger.info("Generating Broken Array Multiplier (BAM) candidates...")
+            bam_cands = self._generate_bam_candidates(iface, run_dir)
+            all_candidates.extend(bam_cands)
+
+        if method.lower() in ("auto", "spatial", "perforate"):
+            logger.info("Generating Spatial Tap Perforation candidates...")
+            spatial_cands = self._generate_spatial_perforated_candidates(iface, run_dir)
+            all_candidates.extend(spatial_cands)
 
         if method.lower() in ("auto", "lut_prune", "probprun"):
             logger.info("Generating Native 6-LUT Cut Pruning candidates...")
